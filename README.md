@@ -72,6 +72,8 @@ Dashboard web untuk **monitoring, konfigurasi MikroTik, manajemen hotspot, dan p
 
 ## Mulai cepat
 
+> Panduan langkah demi langkah untuk instal baru, update dari versi sebelumnya, dan menjalankan otomatis ada di [INSTALL.md](INSTALL.md).
+
 ### Opsi A — Docker (disarankan untuk server/VPS)
 
 ```bash
