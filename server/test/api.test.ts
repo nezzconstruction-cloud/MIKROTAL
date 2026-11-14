@@ -237,3 +237,203 @@ test('laporan, dashboard, terminal, audit', async () => {
   await api('PUT', '/api/settings', { alerts: { telegram: { botToken: settings.body.alerts.telegram.botToken } } });
   assert.equal(ctx.settings.get().alerts.telegram.botToken, '123456:ABCDEFGHIJKLMNOP');
 });
+
+// ------------------------------------------------------------------ PPPoE
+
+let pkgId = 0;
+let custId = 0;
+let odpId = 0;
+
+test('PPPoE: paket, ODC/ODP, dan pelanggan baru membuat secret di router', async () => {
+  const demo = await api('GET', `/api/customers?routerId=${routerId}`);
+  assert.equal(demo.status, 200);
+  assert.equal(demo.body.total, 3, 'pelanggan contoh');
+
+  const badProfile = await api('POST', '/api/pppoe/packages', { routerId, name: 'X', profile: 'TIDAK-ADA', price: 1, validity: '30d' });
+  assert.equal(badProfile.status, 400);
+  const pkg = await api('POST', '/api/pppoe/packages', { routerId, name: 'Hemat 10M', profile: 'PPPoE-10M', price: 100000, resellerPrice: 90000, validity: '30d' });
+  assert.equal(pkg.status, 200, JSON.stringify(pkg.body));
+  pkgId = pkg.body.id;
+
+  const odc = await api('POST', '/api/odcs', { routerId, name: 'ODC-T', ports: 4 });
+  assert.equal(odc.status, 200, JSON.stringify(odc.body));
+  const odp = await api('POST', '/api/odps', { routerId, name: 'ODP-T1', odcId: odc.body.id, odcPort: 1, ports: 2 });
+  assert.equal(odp.status, 200, JSON.stringify(odp.body));
+  odpId = odp.body.id;
+  const dupPort = await api('POST', '/api/odps', { routerId, name: 'ODP-T2', odcId: odc.body.id, odcPort: 1, ports: 8 });
+  assert.equal(dupPort.status, 400);
+  assert.match(dupPort.body.error, /sudah dipakai/);
+  const overPort = await api('POST', '/api/odps', { routerId, name: 'ODP-T2', odcId: odc.body.id, odcPort: 9, ports: 8 });
+  assert.equal(overPort.status, 400);
+
+  const c = await api('POST', '/api/customers', { routerId, name: 'Pak Budi', username: 'budi', password: 'budi123', packageId: pkgId, odpId, odpPort: 1, initialValidity: '30d' });
+  assert.equal(c.status, 200, JSON.stringify(c.body));
+  custId = c.body.id;
+  assert.equal(c.body.status, 'active');
+  assert.ok(Date.parse(c.body.expires_at) > Date.now() + 29 * 86400_000);
+
+  const samePort = await api('POST', '/api/customers', { routerId, name: 'Lain', username: 'lain', password: 'lain123', packageId: pkgId, odpId, odpPort: 1, initialValidity: '30d' });
+  assert.equal(samePort.status, 400);
+  const badPort = await api('POST', '/api/customers', { routerId, name: 'Lain', username: 'lain', password: 'lain123', packageId: pkgId, odpId, odpPort: 3, initialValidity: '30d' });
+  assert.equal(badPort.status, 400);
+  const dupUser = await api('POST', '/api/customers', { routerId, name: 'Budi 2', username: 'budi', password: 'budi123' });
+  assert.equal(dupUser.status, 400);
+
+  const secrets = await api('GET', `/api/routers/${routerId}/res?path=/ppp/secret`);
+  const s = secrets.body.find((x: any) => x.name === 'budi');
+  assert.ok(s, 'secret dibuat di router');
+  assert.equal(s.profile, 'PPPoE-10M');
+  assert.equal(s.service, 'pppoe');
+  assert.match(s.comment, /^MIKROTAL\|Pak Budi/);
+
+  const topo = await api('GET', `/api/topology?routerId=${routerId}`);
+  const t = topo.body.odcs.find((d: any) => d.name === 'ODC-T');
+  assert.equal(t.odps[0].customers[0].username, 'budi');
+  assert.equal(t.odps[0].used, 1);
+});
+
+test('PPPoE: masa aktif habis → diisolir, voucher → aktif kembali dan masa aktif bertambah', async () => {
+  const conn = (await ctx.routers.connection(routerId)) as SimulatedRouter;
+  conn.pppConnect('budi');
+  let stats: any = await ctx.pppoe.sync(routerId);
+  assert.equal(ctx.pppoe.requireCustomer(custId).online, 1);
+  assert.equal(stats.isolated, 0);
+
+  ctx.db.run('UPDATE customers SET expires_at = ? WHERE id = ?', [new Date(Date.now() - 60_000).toISOString(), custId]);
+  stats = await ctx.pppoe.sync(routerId);
+  assert.equal(stats.isolated, 1);
+  let c = ctx.pppoe.requireCustomer(custId);
+  assert.equal(c.status, 'isolated');
+  assert.equal(c.online, 0, 'sesi diputus agar menyambung ulang dengan profil isolir');
+
+  const profiles = await api('GET', `/api/routers/${routerId}/res?path=/ppp/profile`);
+  const iso = profiles.body.find((p: any) => p.name === 'ISOLIR');
+  assert.ok(iso, 'profil isolir dibuat otomatis');
+  assert.equal(iso['address-list'], 'isolir');
+  let secrets = await api('GET', `/api/routers/${routerId}/res?path=/ppp/secret`);
+  assert.equal(secrets.body.find((x: any) => x.name === 'budi').profile, 'ISOLIR');
+  assert.equal(secrets.body.find((x: any) => x.name === 'budi').disabled, 'false', 'diisolir, bukan dinonaktifkan');
+
+  const reopen = await api('POST', `/api/customers/${custId}/status`, { status: 'active' });
+  assert.equal(reopen.status, 400, 'tidak bisa dibuka tanpa perpanjangan');
+
+  const gen = await api('POST', '/api/pppoe/vouchers/generate', { packageId: pkgId, qty: 5 });
+  assert.equal(gen.status, 200, JSON.stringify(gen.body));
+  assert.equal(gen.body.created, 5);
+  const list = await api('GET', `/api/pppoe/vouchers?batchId=${gen.body.batch.id}`);
+  assert.equal(list.body.counts.unused, 5);
+  const [v1, v2] = list.body.rows.map((r: any) => r.code);
+  assert.match(v1, /^\d{10}$/);
+
+  // pelanggan mengisi sendiri dari halaman isolir (tanpa login)
+  const pubBad = await api('POST', '/api/public/pppoe/redeem', { username: 'budi', code: '0000000000' }, '');
+  assert.equal(pubBad.status, 404);
+  const pubNoUser = await api('POST', '/api/public/pppoe/redeem', { username: 'tidakada', code: v1 }, '');
+  assert.equal(pubNoUser.status, 404);
+  const before = Date.now();
+  const pub = await api('POST', '/api/public/pppoe/redeem', { username: 'budi', code: `${v1.slice(0, 5)} ${v1.slice(5)}` }, '');
+  assert.equal(pub.status, 200, JSON.stringify(pub.body));
+  assert.equal(pub.body.customer.status, 'active');
+  assert.notEqual(pub.body.customer.name, 'Pak Budi', 'nama disamarkan');
+  assert.equal(pub.body.customer.password, undefined);
+  c = ctx.pppoe.requireCustomer(custId);
+  assert.equal(c.status, 'active');
+  const exp1 = Date.parse(c.expires_at!);
+  assert.ok(exp1 >= before + 30 * 86400_000 && exp1 < before + 30 * 86400_000 + 60_000, 'dihitung dari sekarang karena sudah habis');
+  secrets = await api('GET', `/api/routers/${routerId}/res?path=/ppp/secret`);
+  assert.equal(secrets.body.find((x: any) => x.name === 'budi').profile, 'PPPoE-10M');
+
+  const twice = await api('POST', '/api/public/pppoe/redeem', { username: 'budi', code: v1 }, '');
+  assert.equal(twice.status, 400);
+  assert.match(twice.body.error, /sudah pernah dipakai/);
+
+  // voucher kedua oleh operator: sisa masa aktif tidak hangus
+  const r2 = await api('POST', `/api/customers/${custId}/redeem`, { code: v2 });
+  assert.equal(r2.status, 200, JSON.stringify(r2.body));
+  assert.equal(Date.parse(r2.body.expires_at), exp1 + 30 * 86400_000);
+
+  const status = await api('GET', '/api/public/pppoe/budi', undefined, '');
+  assert.equal(status.status, 200);
+  assert.equal(status.body.package, 'Hemat 10M');
+
+  const detail = await api('GET', `/api/customers/${custId}`);
+  const types = detail.body.history.map((h: any) => h.type);
+  assert.deepEqual(types, ['voucher', 'voucher', 'isolate', 'manual']);
+
+  const rep = await api('GET', '/api/reports/sales');
+  assert.equal(rep.body.totals.pppoe, 200000);
+  assert.equal(rep.body.totals.direct, 3000, 'penjualan hotspot tidak berubah');
+});
+
+test('PPPoE: perpanjang manual, isolir manual, nonaktif, ubah & hapus', async () => {
+  const ext = await api('POST', `/api/customers/${custId}/extend`, { validity: '7d', amount: 40000, note: 'tunai' });
+  assert.equal(ext.status, 200, JSON.stringify(ext.body));
+
+  const iso = await api('POST', `/api/customers/${custId}/status`, { status: 'isolated' });
+  assert.equal(iso.body.customer.status, 'isolated');
+  let secrets = await api('GET', `/api/routers/${routerId}/res?path=/ppp/secret`);
+  assert.equal(secrets.body.find((x: any) => x.name === 'budi').profile, 'ISOLIR');
+  const open = await api('POST', `/api/customers/${custId}/status`, { status: 'active' });
+  assert.equal(open.status, 200, JSON.stringify(open.body));
+
+  const off = await api('POST', `/api/customers/${custId}/status`, { status: 'disabled' });
+  assert.equal(off.status, 200);
+  secrets = await api('GET', `/api/routers/${routerId}/res?path=/ppp/secret`);
+  assert.equal(secrets.body.find((x: any) => x.name === 'budi').disabled, 'true');
+  await api('POST', `/api/customers/${custId}/status`, { status: 'active' });
+
+  const upd = await api('PATCH', `/api/customers/${custId}`, { name: 'Pak Budi Santoso', password: 'baru12345', odpPort: 2 });
+  assert.equal(upd.status, 200, JSON.stringify(upd.body));
+  assert.equal(upd.body.customer.odp_port, 2);
+  secrets = await api('GET', `/api/routers/${routerId}/res?path=/ppp/secret`);
+  const s = secrets.body.find((x: any) => x.name === 'budi');
+  assert.equal(s.password, 'baru12345');
+  assert.equal(s.disabled, 'false');
+
+  // admin mengubah profil langsung di Winbox → sinkronisasi mengembalikannya
+  await api('PATCH', `/api/routers/${routerId}/res/${encodeURIComponent(s['.id'])}?path=/ppp/secret`, { profile: 'PPPoE-20M' });
+  const stats: any = await ctx.pppoe.sync(routerId);
+  assert.equal(stats.fixed, 1);
+
+  const setup = await api('POST', '/api/pppoe/isolir/setup', { routerId });
+  assert.equal(setup.status, 200, JSON.stringify(setup.body));
+  assert.ok(setup.body.done.some((d: string) => /blokir internet/.test(d)));
+  const again = await api('POST', '/api/pppoe/isolir/setup', { routerId });
+  assert.equal(again.body.done.length, 0, 'tidak menggandakan aturan');
+
+  const sum = await api('GET', `/api/pppoe/summary?routerId=${routerId}`);
+  assert.equal(sum.body.customers.total, 4);
+  assert.equal(sum.body.vouchers.unused, 3);
+
+  const imp = await api('POST', '/api/customers/import', { routerId });
+  assert.equal(imp.body.imported, 0, 'semua akun sudah terdaftar');
+
+  const del = await api('DELETE', `/api/customers/${custId}`);
+  assert.equal(del.status, 200);
+  secrets = await api('GET', `/api/routers/${routerId}/res?path=/ppp/secret`);
+  assert.equal(secrets.body.find((x: any) => x.name === 'budi'), undefined);
+});
+
+test('PPPoE: reseller membeli voucher dengan harga reseller, operator tidak bisa pasang firewall isolir', async () => {
+  const login = await api('POST', '/api/auth/login', { username: 'konter', password: 'konter123' }, '');
+  const rt = login.body.token;
+  const before = (await api('GET', '/api/resellers', undefined, rt)).body[0].balance;
+  const gen = await api('POST', '/api/pppoe/vouchers/generate', { packageId: pkgId, qty: 2 }, rt);
+  assert.equal(gen.status, 200, JSON.stringify(gen.body));
+  assert.equal(gen.body.batch.cost, 180000);
+  assert.equal((await api('GET', '/api/resellers', undefined, rt)).body[0].balance, before - 180000);
+  const mine = await api('GET', '/api/pppoe/vouchers', undefined, rt);
+  assert.equal(mine.body.total, 2);
+  const cust = await api('GET', '/api/customers', undefined, rt);
+  assert.equal(cust.status, 403);
+
+  const del = await api('DELETE', `/api/pppoe/vouchers/batches/${gen.body.batch.id}?refund=1`);
+  assert.equal(del.body.removed, 2);
+  assert.equal((await api('GET', '/api/resellers', undefined, rt)).body[0].balance, before);
+
+  const ot = (await api('POST', '/api/auth/login', { username: 'opr', password: 'opr12345' }, '')).body.token;
+  const setup = await api('POST', '/api/pppoe/isolir/setup', { routerId }, ot);
+  assert.equal(setup.status, 403);
+  const list = await api('GET', '/api/customers', undefined, ot);
+  assert.equal(list.status, 200);
+});

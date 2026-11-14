@@ -5,6 +5,7 @@ import { hasPermission, type Permission, type Role, type SecretBox } from './lib
 import type { AlertService, AuditService, Hub } from './services/alerts.js';
 import type { BackupService } from './services/backup.js';
 import type { MonitorService } from './services/monitor.js';
+import type { PppoeService } from './services/pppoe.js';
 import type { RouterManager } from './services/routers.js';
 import type { SettingsService } from './services/settings.js';
 import { HttpError, type VoucherService } from './services/vouchers.js';
@@ -18,6 +19,7 @@ export interface AppContext {
   routers: RouterManager;
   monitor: MonitorService;
   vouchers: VoucherService;
+  pppoe: PppoeService;
   alerts: AlertService;
   audit: AuditService;
   backup: BackupService;

@@ -170,4 +170,128 @@ export const migrations: { version: number; sql: string }[] = [
       );
     `,
   },
+  {
+    version: 2,
+    sql: `
+      CREATE TABLE odcs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        router_id INTEGER NOT NULL REFERENCES routers(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        location TEXT NOT NULL DEFAULT '',
+        ports INTEGER NOT NULL DEFAULT 12,
+        note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        UNIQUE (router_id, name)
+      );
+
+      CREATE TABLE odps (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        router_id INTEGER NOT NULL REFERENCES routers(id) ON DELETE CASCADE,
+        odc_id INTEGER REFERENCES odcs(id) ON DELETE SET NULL,
+        odc_port INTEGER,
+        name TEXT NOT NULL,
+        location TEXT NOT NULL DEFAULT '',
+        ports INTEGER NOT NULL DEFAULT 8,
+        note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        UNIQUE (router_id, name)
+      );
+      CREATE UNIQUE INDEX idx_odps_odc_port ON odps(odc_id, odc_port) WHERE odc_id IS NOT NULL AND odc_port IS NOT NULL;
+
+      CREATE TABLE ppp_packages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        router_id INTEGER NOT NULL REFERENCES routers(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        profile TEXT NOT NULL,
+        price REAL NOT NULL DEFAULT 0,
+        reseller_price REAL NOT NULL DEFAULT 0,
+        validity TEXT NOT NULL DEFAULT '30d',
+        active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        UNIQUE (router_id, name)
+      );
+
+      CREATE TABLE customers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        router_id INTEGER NOT NULL REFERENCES routers(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        phone TEXT NOT NULL DEFAULT '',
+        address TEXT NOT NULL DEFAULT '',
+        username TEXT NOT NULL,
+        password TEXT NOT NULL DEFAULT '',
+        package_id INTEGER REFERENCES ppp_packages(id) ON DELETE SET NULL,
+        profile TEXT NOT NULL DEFAULT '',
+        odp_id INTEGER REFERENCES odps(id) ON DELETE SET NULL,
+        odp_port INTEGER,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','isolated','disabled')),
+        expires_at TEXT,
+        online INTEGER NOT NULL DEFAULT 0,
+        on_router INTEGER NOT NULL DEFAULT 1,
+        ip TEXT NOT NULL DEFAULT '',
+        mac TEXT NOT NULL DEFAULT '',
+        uptime_seconds INTEGER NOT NULL DEFAULT 0,
+        last_seen_at TEXT,
+        note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        UNIQUE (router_id, username)
+      );
+      CREATE UNIQUE INDEX idx_customers_odp_port ON customers(odp_id, odp_port) WHERE odp_id IS NOT NULL AND odp_port IS NOT NULL;
+      CREATE INDEX idx_customers_expires ON customers(router_id, status, expires_at);
+
+      CREATE TABLE ppp_voucher_batches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL UNIQUE,
+        router_id INTEGER NOT NULL REFERENCES routers(id) ON DELETE CASCADE,
+        package_id INTEGER REFERENCES ppp_packages(id) ON DELETE SET NULL,
+        package_name TEXT NOT NULL,
+        qty INTEGER NOT NULL,
+        price REAL NOT NULL DEFAULT 0,
+        validity TEXT NOT NULL DEFAULT '',
+        reseller_id INTEGER REFERENCES resellers(id) ON DELETE SET NULL,
+        cost REAL NOT NULL DEFAULT 0,
+        note TEXT NOT NULL DEFAULT '',
+        created_by TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE ppp_vouchers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        batch_id INTEGER REFERENCES ppp_voucher_batches(id) ON DELETE CASCADE,
+        router_id INTEGER NOT NULL REFERENCES routers(id) ON DELETE CASCADE,
+        code TEXT NOT NULL UNIQUE,
+        package_id INTEGER REFERENCES ppp_packages(id) ON DELETE SET NULL,
+        package_name TEXT NOT NULL,
+        price REAL NOT NULL DEFAULT 0,
+        validity TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'unused' CHECK (status IN ('unused','used')),
+        reseller_id INTEGER REFERENCES resellers(id) ON DELETE SET NULL,
+        customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+        customer_name TEXT NOT NULL DEFAULT '',
+        used_at TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_ppp_vouchers_status ON ppp_vouchers(router_id, status);
+      CREATE INDEX idx_ppp_vouchers_batch ON ppp_vouchers(batch_id);
+      CREATE INDEX idx_ppp_vouchers_used ON ppp_vouchers(used_at);
+
+      CREATE TABLE customer_tx (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+        router_id INTEGER NOT NULL REFERENCES routers(id) ON DELETE CASCADE,
+        type TEXT NOT NULL CHECK (type IN ('voucher','manual','isolate','restore')),
+        voucher_code TEXT NOT NULL DEFAULT '',
+        reseller_id INTEGER REFERENCES resellers(id) ON DELETE SET NULL,
+        package_name TEXT NOT NULL DEFAULT '',
+        amount REAL NOT NULL DEFAULT 0,
+        validity TEXT NOT NULL DEFAULT '',
+        expires_before TEXT,
+        expires_after TEXT,
+        note TEXT NOT NULL DEFAULT '',
+        created_by TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_customer_tx_customer ON customer_tx(customer_id, id);
+      CREATE INDEX idx_customer_tx_created ON customer_tx(created_at);
+    `,
+  },
 ];

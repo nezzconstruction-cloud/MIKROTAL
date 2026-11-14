@@ -5,6 +5,26 @@ import { hasPermission, type Role } from '../lib/security.js';
 import { parseDuration } from '../lib/duration.js';
 import { HttpError } from '../services/vouchers.js';
 import crypto from 'node:crypto';
+import { z } from 'zod';
+
+function maskName(name: string) {
+  return name
+    .split(/\s+/)
+    .map((w) => (w.length <= 2 ? w : w[0] + '*'.repeat(Math.min(w.length - 2, 6)) + w[w.length - 1]))
+    .join(' ');
+}
+
+function publicCustomer(c: any) {
+  return {
+    username: c.username,
+    name: maskName(c.name ?? ''),
+    package: c.package_name ?? '',
+    price: c.package_price ?? 0,
+    status: c.status,
+    expires_at: c.expires_at,
+    online: !!c.online,
+  };
+}
 
 export async function publicRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get('/api/health', async () => ({ ok: true, time: new Date().toISOString() }));
@@ -41,6 +61,29 @@ export async function publicRoutes(app: FastifyInstance, ctx: AppContext) {
     },
   );
 
+  /** Cek masa aktif PPPoE oleh pelanggan (tanpa login). Nama disamarkan. */
+  app.get('/api/public/pppoe/:username', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req) => {
+    const username = String((req.params as any).username ?? '').trim();
+    if (!username || username.length > 64) throw new HttpError(400, 'Username tidak valid');
+    const c = ctx.db.get<any>(
+      `SELECT c.*, p.name AS package_name, p.price AS package_price FROM customers c LEFT JOIN ppp_packages p ON p.id = c.package_id WHERE c.username = ? ORDER BY c.id LIMIT 1`,
+      [username],
+    );
+    if (!c) throw new HttpError(404, 'Akun PPPoE tidak ditemukan');
+    return publicCustomer(c);
+  });
+
+  /** Isi ulang masa aktif PPPoE dengan kode voucher (tanpa login) — dipakai halaman isolir. */
+  app.post('/api/public/pppoe/redeem', { config: { rateLimit: { max: 8, timeWindow: '1 minute' } } }, async (req) => {
+    const b = z
+      .object({ username: z.string().trim().min(1, 'Masukkan username PPPoE').max(64), code: z.string().trim().min(1, 'Masukkan kode voucher').max(40) })
+      .parse(req.body);
+    const r = await ctx.pppoe.redeem({ code: b.code, username: b.username }, 'pelanggan');
+    ctx.audit.record({ username: 'pelanggan', action: 'customer.redeem.public', target: r.customer.username, detail: { code: r.voucher.code }, ip: req.ip });
+    const pkg = r.customer.package_id ? ctx.db.get<any>('SELECT name, price FROM ppp_packages WHERE id = ?', [r.customer.package_id]) : undefined;
+    return { ok: true, voucher: r.voucher, customer: publicCustomer({ ...r.customer, package_name: pkg?.name, package_price: pkg?.price }) };
+  });
+
   // ---- WebSocket realtime ----
   app.get('/api/ws', { websocket: true }, (socket: WebSocket, req) => {
     const token = String((req.query as any).token ?? '');
@@ -68,11 +111,15 @@ export async function publicRoutes(app: FastifyInstance, ctx: AppContext) {
     const onAlert = (a: any) => canRouter && send('alert', a);
     const onVouchers = (v: any) => send('vouchers', v);
     const onActivated = (v: any) => canRouter && send('voucher.activated', v);
+    const onCustomers = (v: any) => canRouter && send('customers', v);
+    const onPppVouchers = (v: any) => send('ppp-vouchers', v);
     ctx.hub.on('status', onStatus);
     ctx.hub.on('traffic', onTraffic);
     ctx.hub.on('alert', onAlert);
     ctx.hub.on('vouchers', onVouchers);
     ctx.hub.on('voucher.activated', onActivated);
+    ctx.hub.on('customers', onCustomers);
+    ctx.hub.on('ppp-vouchers', onPppVouchers);
 
     if (canRouter) {
       for (const snap of ctx.monitor.latest.values()) send('status', snap);
@@ -110,6 +157,8 @@ export async function publicRoutes(app: FastifyInstance, ctx: AppContext) {
       ctx.hub.off('alert', onAlert);
       ctx.hub.off('vouchers', onVouchers);
       ctx.hub.off('voucher.activated', onActivated);
+      ctx.hub.off('customers', onCustomers);
+      ctx.hub.off('ppp-vouchers', onPppVouchers);
       ctx.monitor.unsubscribeTraffic(clientId);
     });
   });

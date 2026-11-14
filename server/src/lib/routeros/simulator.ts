@@ -415,6 +415,8 @@ export class SimulatedRouter extends EventEmitter implements RouterConnection {
       else if (SimulatedRouter.autoActivity && Math.random() < dt / 900) this.logout(a, 'keepalive timeout');
     }
 
+    this.tickPpp(dt);
+
     // Login baru: utamakan voucher yang belum dipakai
     const maxActive = 25;
     if (SimulatedRouter.autoActivity && active.length < maxActive) {
@@ -433,6 +435,43 @@ export class SimulatedRouter extends EventEmitter implements RouterConnection {
         this.login(user);
       }
     }
+  }
+
+  /** Sesi PPPoE: router klien selalu mencoba menyambung selama akunnya tidak dinonaktifkan. */
+  private tickPpp(dt: number) {
+    const secrets = this.table('/ppp/secret');
+    const active = this.table('/ppp/active');
+    for (const a of [...active]) {
+      const s = secrets.find((x) => x.name === a.name);
+      if (!s || s.disabled === 'true') active.splice(active.indexOf(a), 1);
+      else a.uptime = formatDuration(parseDuration(a.uptime) + dt);
+    }
+    if (!SimulatedRouter.autoActivity) return;
+    for (const s of secrets) {
+      if (s.disabled === 'true' || active.some((a) => a.name === s.name)) continue;
+      // akun contoh "offline" dibiarkan mati untuk demo; lainnya menyambung ulang dalam beberapa detik
+      if (/offline/i.test(s.comment ?? '') || Math.random() > dt / 6) continue;
+      this.pppConnect(s.name);
+    }
+  }
+
+  /** Simulasikan router klien menyambung PPPoE (dipakai tes dan demo). */
+  pppConnect(name: string) {
+    const s = this.table('/ppp/secret').find((x) => x.name === name);
+    const active = this.table('/ppp/active');
+    if (!s || s.disabled === 'true' || active.some((a) => a.name === name)) return false;
+    const isolated = /isolir/i.test(s.profile ?? '');
+    active.push({
+      '.id': this.newId(),
+      name,
+      service: 'pppoe',
+      address: isolated ? `10.99.0.${randInt(2, 250)}` : `172.16.0.${randInt(10, 250)}`,
+      'caller-id': macAddr(),
+      uptime: '0s',
+      encoding: '',
+    });
+    this.log('pppoe,ppp,info,account', `${name} logged in, ${s.profile}`);
+    return true;
   }
 
   private login(user: Item) {
@@ -501,7 +540,7 @@ export class SimulatedRouter extends EventEmitter implements RouterConnection {
 
   private applyParams(item: Item, params: RosParams) {
     for (const [k, v] of Object.entries(params)) {
-      if (k === '.id' || k === 'numbers' || v === undefined) continue;
+      if (k === '.id' || k === 'numbers' || k === 'place-before' || v === undefined) continue;
       item[k] = normBool(formatValue(v));
     }
   }
@@ -663,6 +702,7 @@ export class SimulatedRouter extends EventEmitter implements RouterConnection {
         const item: Item = { '.id': this.newId(), disabled: 'false', comment: '' };
         if (base === '/ip/hotspot/user') Object.assign(item, { profile: 'default', server: 'all', uptime: '0s', 'bytes-in': '0', 'bytes-out': '0', 'limit-uptime': '', 'limit-bytes-total': '0' });
         if (base === '/interface/vlan') Object.assign(item, { type: 'vlan', running: 'true', mtu: '1500' });
+        if (base === '/ppp/secret') Object.assign(item, { service: 'any', profile: 'default' });
         this.applyParams(item, params);
         rows.push(item);
         if (base === '/interface/vlan') {
