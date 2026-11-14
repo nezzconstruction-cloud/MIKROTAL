@@ -294,4 +294,17 @@ export const migrations: { version: number; sql: string }[] = [
       CREATE INDEX idx_customer_tx_created ON customer_tx(created_at);
     `,
   },
+  {
+    version: 3,
+    sql: `
+      ALTER TABLE routers ADD COLUMN lat REAL;
+      ALTER TABLE routers ADD COLUMN lng REAL;
+      ALTER TABLE odcs ADD COLUMN lat REAL;
+      ALTER TABLE odcs ADD COLUMN lng REAL;
+      ALTER TABLE odps ADD COLUMN lat REAL;
+      ALTER TABLE odps ADD COLUMN lng REAL;
+      ALTER TABLE customers ADD COLUMN lat REAL;
+      ALTER TABLE customers ADD COLUMN lng REAL;
+    `,
+  },
 ];

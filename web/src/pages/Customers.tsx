@@ -8,6 +8,7 @@ import { useAuth } from '../lib/auth';
 import { durationLabel, formatDate, formatMoney, humanDuration, timeAgo } from '../lib/format';
 import { CUSTOMER_STATUS, daysLeft, type Customer, type PppPackage, type Topology } from '../lib/pppoe';
 import { RequireRouter } from '../components/RequireRouter';
+import { LocationPicker } from '../components/FiberMap';
 import { Badge, Button, Card, EmptyState, ErrorBox, Field, IconButton, Input, KeyValue, Loading, Modal, PageHeader, SearchInput, Select, StatusDot, Tabs, Textarea, Toggle, useAction, useFeedback } from '../components/ui';
 
 function usePackages(routerId: number) {
@@ -80,6 +81,8 @@ function CustomerModal({ routerId, customer, onClose }: { routerId: number; cust
     packageId: customer?.package_id ?? (null as number | null),
     odpId: customer?.odp_id ?? (null as number | null),
     odpPort: customer?.odp_port ?? (null as number | null),
+    lat: customer?.lat ?? (null as number | null),
+    lng: customer?.lng ?? (null as number | null),
     start: 'package' as 'package' | 'none' | 'unlimited',
     note: customer?.note ?? '',
   });
@@ -89,7 +92,7 @@ function CustomerModal({ routerId, customer, onClose }: { routerId: number; cust
   const save = async () => {
     const r = await run(async () => {
       if (customer) {
-        return patch<{ routerError?: string }>(`/api/customers/${customer.id}`, { name: f.name, phone: f.phone, address: f.address, password: f.password, packageId: f.packageId, odpId: f.odpId, odpPort: f.odpPort, note: f.note });
+        return patch<{ routerError?: string }>(`/api/customers/${customer.id}`, { name: f.name, phone: f.phone, address: f.address, password: f.password, packageId: f.packageId, odpId: f.odpId, odpPort: f.odpPort, lat: f.lat, lng: f.lng, note: f.note });
       }
       await post('/api/customers', {
         routerId,
@@ -101,6 +104,8 @@ function CustomerModal({ routerId, customer, onClose }: { routerId: number; cust
         packageId: f.packageId,
         odpId: f.odpId,
         odpPort: f.odpPort,
+        lat: f.lat,
+        lng: f.lng,
         initialValidity: f.start === 'package' ? pkg?.validity ?? '' : '',
         unlimited: f.start === 'unlimited',
         note: f.note,
@@ -172,6 +177,7 @@ function CustomerModal({ routerId, customer, onClose }: { routerId: number; cust
           </Field>
         )}
         <OdpFields routerId={routerId} odpId={f.odpId} odpPort={f.odpPort} customerId={customer?.id} onChange={(o, p) => setF((x) => ({ ...x, odpId: o, odpPort: p }))} />
+        <LocationPicker label="Titik lokasi rumah" value={f} onChange={(v) => setF((x) => ({ ...x, ...v }))} hint="Opsional. Dipakai untuk menggambar kabel drop di peta dan mengarahkan teknisi." />
         <Field label="Catatan" className="sm:col-span-2">
           <Textarea rows={2} value={f.note} onChange={(e) => set('note', e.target.value)} />
         </Field>

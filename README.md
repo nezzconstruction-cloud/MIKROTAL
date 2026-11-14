@@ -42,6 +42,8 @@ Dashboard web untuk **monitoring, konfigurasi MikroTik, manajemen hotspot, dan p
 - **Isolir otomatis**: saat masa aktif habis, akun dipindah ke profil isolir (bukan diputus). Begitu voucher diisikan, profil paket dikembalikan dan sesi disambung ulang.
 - **Halaman pelanggan tanpa login**: `/isi` untuk cek masa aktif dan isi voucher, `/isolir` sebagai tujuan pengalihan saat terisolir.
 - **Topologi ODC → ODP → pelanggan**: status tiap port (online, offline, terisolir, kosong) dan notifikasi bila semua pelanggan di satu ODP mati bersamaan.
+- **Lokasi & peta jalur**: titik koordinat server, ODC, ODP, dan rumah pelanggan (ketik, tempel tautan Google Maps, lokasi HP di lapangan, atau klik di peta OpenStreetMap).
+- **Troubleshoot jalur**: scan status PPPoE semua pelanggan untuk menunjuk segmen kabel yang diduga putus (feeder, distribusi, atau drop), lengkap dengan langkah pengecekan, pelanggan terdampak, log router, dan notifikasi otomatis.
 - **Paket & harga**, perpanjangan manual (tunai/transfer), impor akun PPPoE yang sudah ada, voucher untuk reseller, dan laporan penjualan PPPoE.
 
 ### Keamanan & administrasi
@@ -148,6 +150,21 @@ Penjualan reseller dihitung saat reseller membeli voucher (saldo terpotong), sed
 3. **Pelanggan**: tambah pelanggan baru (akun PPPoE dibuat di router) atau **Impor dari router** untuk akun yang sudah ada, lalu tempatkan di port ODP.
 4. **Voucher Isi Ulang**: buat dan cetak voucher. Pelanggan mengisinya sendiri di `/isi`, atau operator lewat tombol **Isi voucher** di daftar pelanggan.
 5. Saat masa aktif habis, pelanggan diisolir otomatis pada sinkronisasi berikutnya (default tiap 60 detik).
+
+### Troubleshoot jalur kabel
+
+Menu **Troubleshoot Jalur** membandingkan pelanggan mana yang offline bersamaan, lalu menunjuk segmen yang mereka pakai bersama:
+
+| Pola offline | Segmen yang diduga |
+|---|---|
+| Semua pelanggan di semua ODC | Sisi server: port router, OLT, atau kabel utama |
+| Semua ODP di bawah satu ODC, ODC lain normal | Kabel **feeder** server → ODC |
+| Semua pelanggan satu ODP, ODP lain di ODC yang sama normal | Kabel **distribusi** ODC → ODP |
+| Satu pelanggan, tetangganya di ODP yang sama normal | Kabel **drop** ODP → rumah, atau perangkat pelanggan |
+
+Syarat agar hasilnya berguna: setiap pelanggan ditempatkan di ODP dan port yang benar, dan koordinat server/ODC/ODP diisi agar segmen tampil di peta. Tombol **Scan jalur sekarang** mengambil status terbaru dari router, memeriksa interface PPPoE server, dan melampirkan baris log router terakhir tiap pelanggan terdampak. Sinkronisasi berkala juga mengirim notifikasi (aplikasi dan Telegram) saat pola feeder/distribusi putus muncul dan saat pulih.
+
+Batasan: aplikasi tidak mengukur kabel secara fisik. Hasilnya menunjuk **segmen**, bukan meter ke berapa kabel putus; titik pastinya tetap perlu OTDR atau power meter. Pemadaman listrik satu gang bisa terlihat sama seperti kabel distribusi putus. Garis di peta ditarik lurus antar titik, bukan rute kabel sebenarnya. Peta memuat ubin dari OpenStreetMap, jadi browser pengguna perlu akses internet.
 
 ### Menyiapkan isolir di router
 

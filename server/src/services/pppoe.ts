@@ -2,6 +2,7 @@ import type { DB } from '../db/index.js';
 import { parseDuration } from '../lib/duration.js';
 import type { RosRow } from '../lib/routeros/types.js';
 import type { AlertService, Hub } from './alerts.js';
+import { diagnose, type Diagnosis } from './diagnosis.js';
 import type { RouterManager } from './routers.js';
 import type { SettingsService } from './settings.js';
 import { generateCodes, HttpError, randomCode } from './vouchers.js';
@@ -20,6 +21,8 @@ export interface CustomerRow {
   profile: string;
   odp_id: number | null;
   odp_port: number | null;
+  lat: number | null;
+  lng: number | null;
   status: CustomerStatus;
   expires_at: string | null;
   online: number;
@@ -71,6 +74,8 @@ export interface CustomerInput {
   packageId?: number | null;
   odpId?: number | null;
   odpPort?: number | null;
+  lat?: number | null;
+  lng?: number | null;
   /** Masa aktif awal, mis. "30d". Kosong = langsung terisolir sampai diisi voucher. */
   initialValidity?: string;
   /** true = tanpa batas masa aktif (mis. akun kantor). */
@@ -93,9 +98,8 @@ const ACTIVE_PROPS = '.id,name,address,caller-id,uptime';
 export class PppoeService {
   private syncing = new Set<number>();
   private timer?: NodeJS.Timeout;
-  /** ODP yang pernah terlihat punya pelanggan online, dan yang sedang dianggap mati. */
-  private odpSeenOnline = new Set<number>();
-  private odpDown = new Set<number>();
+  /** Gangguan jalur (feeder/distribusi/server) yang sedang aktif dan sudah diberitahukan. */
+  private activeFaults = new Map<number, Map<string, string>>();
 
   constructor(
     private readonly db: DB,
@@ -234,9 +238,9 @@ export class PppoeService {
 
     const nowIso = new Date(now).toISOString();
     const { lastId } = this.db.run(
-      `INSERT INTO customers (router_id, name, phone, address, username, password, package_id, profile, odp_id, odp_port, status, expires_at, note, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [router.id, input.name, input.phone ?? '', input.address ?? '', input.username, input.password, pkg?.id ?? null, profile, odpId, port, status, expiresAt, input.note ?? '', nowIso],
+      `INSERT INTO customers (router_id, name, phone, address, username, password, package_id, profile, odp_id, odp_port, lat, lng, status, expires_at, note, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [router.id, input.name, input.phone ?? '', input.address ?? '', input.username, input.password, pkg?.id ?? null, profile, odpId, port, input.lat ?? null, input.lng ?? null, status, expiresAt, input.note ?? '', nowIso],
     );
     if (validSecs > 0 && !input.unlimited) {
       this.db.run(
@@ -251,7 +255,7 @@ export class PppoeService {
 
   async updateCustomer(
     id: number,
-    patch: Partial<Pick<CustomerInput, 'name' | 'phone' | 'address' | 'password' | 'packageId' | 'odpId' | 'odpPort' | 'note' | 'unlimited'>> & { expiresAt?: string | null },
+    patch: Partial<Pick<CustomerInput, 'name' | 'phone' | 'address' | 'password' | 'packageId' | 'odpId' | 'odpPort' | 'lat' | 'lng' | 'note' | 'unlimited'>> & { expiresAt?: string | null },
   ) {
     const cur = this.requireCustomer(id);
     const next = { ...cur };
@@ -271,6 +275,8 @@ export class PppoeService {
       next.odp_id = r.odpId;
       next.odp_port = r.port;
     }
+    if (patch.lat !== undefined) next.lat = patch.lat;
+    if (patch.lng !== undefined) next.lng = patch.lng;
     if (patch.unlimited) next.expires_at = null;
     else if (patch.expiresAt !== undefined) next.expires_at = patch.expiresAt;
     // tanggal dimajukan/dimundurkan manual: status mengikuti
@@ -281,8 +287,8 @@ export class PppoeService {
     }
 
     this.db.run(
-      `UPDATE customers SET name = ?, phone = ?, address = ?, password = ?, package_id = ?, profile = ?, odp_id = ?, odp_port = ?, status = ?, expires_at = ?, note = ? WHERE id = ?`,
-      [next.name, next.phone, next.address, next.password, next.package_id, next.profile, next.odp_id, next.odp_port, next.status, next.expires_at, next.note, id],
+      `UPDATE customers SET name = ?, phone = ?, address = ?, password = ?, package_id = ?, profile = ?, odp_id = ?, odp_port = ?, lat = ?, lng = ?, status = ?, expires_at = ?, note = ? WHERE id = ?`,
+      [next.name, next.phone, next.address, next.password, next.package_id, next.profile, next.odp_id, next.odp_port, next.lat, next.lng, next.status, next.expires_at, next.note, id],
     );
     let routerError: string | undefined;
     try {
@@ -523,35 +529,91 @@ export class PppoeService {
     }
   }
 
-  /** Semua pelanggan aktif di satu ODP mati bersamaan → kemungkinan gangguan kabel/ODP. */
+  /** Kirim notifikasi saat pola offline menunjukkan kabel feeder/distribusi putus, dan saat pulih. */
   private checkOdps(routerId: number) {
-    const rows = this.db.all<{ id: number; name: string; odc_name: string | null; total: number; online: number }>(
-      `SELECT o.id, o.name, d.name AS odc_name, COUNT(c.id) AS total, COALESCE(SUM(c.online), 0) AS online
-       FROM odps o LEFT JOIN odcs d ON d.id = o.odc_id
-       LEFT JOIN customers c ON c.odp_id = o.id AND c.status != 'disabled' AND c.on_router = 1
-       WHERE o.router_id = ? GROUP BY o.id`,
-      [routerId],
-    );
+    const d = this.diagnosis(routerId);
+    const now = new Map(d.findings.filter((f) => f.severity === 'critical').map((f) => [f.key, f]));
+    const prev = this.activeFaults.get(routerId) ?? new Map<string, string>();
     const notify = this.settings.get().pppoe.odpDownAlert;
-    for (const o of rows) {
-      if (o.online > 0) {
-        this.odpSeenOnline.add(o.id);
-        if (this.odpDown.delete(o.id) && notify) {
-          this.alerts.create({ routerId, level: 'success', type: 'odp.up', title: `${o.name} pulih`, message: `${o.online} dari ${o.total} pelanggan kembali online.` });
-        }
-      } else if (o.total >= 2 && this.odpSeenOnline.has(o.id) && !this.odpDown.has(o.id)) {
-        this.odpDown.add(o.id);
-        if (notify) {
-          this.alerts.create({
-            routerId,
-            level: 'critical',
-            type: 'odp.down',
-            title: `${o.name} mati total`,
-            message: `Semua ${o.total} pelanggan di ${o.name}${o.odc_name ? ` (${o.odc_name})` : ''} offline bersamaan. Periksa kabel/ODP.`,
-          });
+    for (const [key, f] of now) {
+      if (prev.has(key) || !notify) continue;
+      const names = f.affected.slice(0, 6).map((a) => a.name).join(', ');
+      this.alerts.create({
+        routerId,
+        level: 'critical',
+        type: `fiber.${f.kind}`,
+        title: f.title,
+        message: `${f.affected.length} pelanggan offline${names ? `: ${names}${f.affected.length > 6 ? ', ...' : ''}` : ''}. Buka menu Troubleshoot Jalur untuk langkah pengecekan.`,
+      });
+    }
+    for (const [key, title] of prev) {
+      if (now.has(key) || !notify) continue;
+      this.alerts.create({ routerId, level: 'success', type: 'fiber.recovered', title: `Pulih: ${title}`, message: 'Pelanggan di jalur ini sudah kembali online.' });
+    }
+    this.activeFaults.set(routerId, new Map([...now].map(([k, f]) => [k, f.title])));
+  }
+
+  // --------------------------------------------------------- Troubleshoot
+
+  /** Diagnosis dari data terakhir di database (tanpa menghubungi router). */
+  diagnosis(routerId: number, extra: { serverPortRunning?: { name: string; running: boolean }[] } = {}): Diagnosis {
+    const r = this.routers.require(routerId) as any;
+    return diagnose({
+      server: { type: 'server', id: r.id, name: r.name, lat: r.lat ?? null, lng: r.lng ?? null },
+      odcs: this.db.all('SELECT id, name, lat, lng FROM odcs WHERE router_id = ?', [routerId]),
+      odps: this.db.all('SELECT id, odc_id, odc_port, name, lat, lng FROM odps WHERE router_id = ?', [routerId]),
+      customers: this.db.all('SELECT id, name, username, phone, status, online, on_router, odp_id, odp_port, last_seen_at, lat, lng FROM customers WHERE router_id = ?', [routerId]),
+      ...extra,
+    });
+  }
+
+  /**
+   * Scan jalur: ambil status PPPoE terbaru dari router, cek interface PPPoE server,
+   * lalu lampirkan baris log router terakhir untuk tiap pelanggan terdampak.
+   */
+  async scan(routerId: number): Promise<Diagnosis & { syncError?: string }> {
+    let syncError: string | undefined;
+    let serverPortRunning: { name: string; running: boolean }[] | undefined;
+    let logs: RosRow[] = [];
+    try {
+      await this.sync(routerId);
+      const [servers, ifaces] = await Promise.all([
+        this.routers.exec(routerId, '/interface/pppoe-server/server/print', { '.proplist': 'interface,disabled' }),
+        this.routers.exec(routerId, '/interface/print', { '.proplist': 'name,running,disabled' }),
+      ]);
+      const state = new Map(ifaces.map((i) => [i.name, i.running === 'true' && i.disabled !== 'true']));
+      serverPortRunning = servers.filter((s) => s.disabled !== 'true' && s.interface && state.has(s.interface)).map((s) => ({ name: s.interface, running: state.get(s.interface)! }));
+      logs = await this.routers.exec(routerId, '/log/print').catch(() => []);
+    } catch (err) {
+      syncError = (err as Error).message;
+    }
+    const d = this.diagnosis(routerId, { serverPortRunning });
+    if (logs.length) {
+      for (const f of d.findings) {
+        for (const a of f.affected) {
+          const re = new RegExp(`(^|[^A-Za-z0-9._@-])${a.username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^A-Za-z0-9._@-])`);
+          // utamakan baris yang menyebut penyebab putus, mis. "terminating... - peer is not responding"
+          let fallback: string | undefined;
+          for (let i = logs.length - 1; i >= 0 && i >= logs.length - 2000; i--) {
+            const msg = logs[i].message ?? '';
+            if (!/pppoe|ppp/.test(logs[i].topics ?? '') || !re.test(msg) || /logged in|connected$/.test(msg)) continue;
+            const line = `${logs[i].time ?? ''} ${msg}`.trim();
+            if (/terminat|disconnect|not responding|timeout|hung ?up|peer/i.test(msg)) {
+              a.lastLog = line;
+              break;
+            }
+            fallback ??= line;
+          }
+          a.lastLog ??= fallback;
         }
       }
     }
+    return { ...d, syncError };
+  }
+
+  setServerLocation(routerId: number, lat: number | null, lng: number | null) {
+    this.routers.require(routerId);
+    this.db.run('UPDATE routers SET lat = ?, lng = ? WHERE id = ?', [lat, lng, routerId]);
   }
 
   // --------------------------------------------------------------- Isolir
@@ -710,7 +772,7 @@ export class PppoeService {
     const odcs = this.db.all<any>('SELECT * FROM odcs WHERE router_id = ? ORDER BY name COLLATE NOCASE', [routerId]);
     const odps = this.db.all<any>('SELECT * FROM odps WHERE router_id = ? ORDER BY odc_port IS NULL, odc_port, name COLLATE NOCASE', [routerId]);
     const customers = this.db.all<any>(
-      `SELECT c.id, c.name, c.username, c.status, c.online, c.on_router, c.odp_id, c.odp_port, c.expires_at, c.last_seen_at, p.name AS package_name
+      `SELECT c.id, c.name, c.username, c.status, c.online, c.on_router, c.odp_id, c.odp_port, c.lat, c.lng, c.expires_at, c.last_seen_at, p.name AS package_name
        FROM customers c LEFT JOIN ppp_packages p ON p.id = c.package_id WHERE c.router_id = ? ORDER BY c.odp_port IS NULL, c.odp_port, c.name COLLATE NOCASE`,
       [routerId],
     );
@@ -720,7 +782,9 @@ export class PppoeService {
       const online = list.filter((c) => c.online).length;
       return { ...o, customers: list, used: list.length, online, down: live.length >= 2 && online === 0 };
     };
+    const r = this.routers.require(routerId) as any;
     return {
+      server: { id: r.id, name: r.name, location: r.location ?? '', lat: r.lat ?? null, lng: r.lng ?? null },
       odcs: odcs.map((d) => {
         const children = odps.filter((o) => o.odc_id === d.id).map(shape);
         return { ...d, odps: children, used: children.length, customers: children.reduce((n, o) => n + o.used, 0), online: children.reduce((n, o) => n + o.online, 0) };
@@ -763,7 +827,7 @@ export class PppoeService {
       remindDays,
       expiringList,
       vouchers,
-      odp: { total: odp.total, ports: odp.ports, used: odpUsed, down: [...this.odpDown].length },
+      odp: { total: odp.total, ports: odp.ports, used: odpUsed, down: [...this.activeFaults.entries()].filter(([id]) => !routerId || id === routerId).reduce((n, [, m]) => n + m.size, 0) },
     };
   }
 }

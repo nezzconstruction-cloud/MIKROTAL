@@ -92,7 +92,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
           void qc.invalidateQueries({ queryKey: ['vouchers'] });
           void qc.invalidateQueries({ queryKey: ['batches'] });
         } else if (msg.type === 'customers') {
-          for (const key of ['customers', 'customer', 'topology', 'pppoe-summary']) void qc.invalidateQueries({ queryKey: [key] });
+          for (const key of ['customers', 'customer', 'topology', 'pppoe-summary', 'troubleshoot']) void qc.invalidateQueries({ queryKey: [key] });
         } else if (msg.type === 'ppp-vouchers') {
           for (const key of ['ppp-vouchers', 'ppp-batches', 'pppoe-summary']) void qc.invalidateQueries({ queryKey: [key] });
         }

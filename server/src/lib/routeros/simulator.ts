@@ -19,6 +19,8 @@ interface SimState {
   tables: Record<string, Item[]>;
   singletons: Record<string, Item>;
   logs: Item[];
+  /** Akun PPPoE yang "kabelnya putus": tidak bisa menyambung sampai dipulihkan. */
+  pppBlocked?: string[];
   ifaceRate: Record<string, { rx: number; tx: number; base: number }>;
   counters: Record<string, { rx: number; tx: number }>;
   cpu: number;
@@ -441,25 +443,46 @@ export class SimulatedRouter extends EventEmitter implements RouterConnection {
   private tickPpp(dt: number) {
     const secrets = this.table('/ppp/secret');
     const active = this.table('/ppp/active');
+    const blocked = new Set(this.s.pppBlocked ?? []);
     for (const a of [...active]) {
       const s = secrets.find((x) => x.name === a.name);
-      if (!s || s.disabled === 'true') active.splice(active.indexOf(a), 1);
+      if (blocked.has(a.name)) {
+        active.splice(active.indexOf(a), 1);
+        this.log('pppoe,ppp,info', `<pppoe-${a.name}>: terminating... - peer is not responding`);
+        this.log('pppoe,ppp,info,account', `${a.name} logged out, ${parseDuration(a.uptime)} 0 0 0 0`);
+      } else if (!s || s.disabled === 'true') active.splice(active.indexOf(a), 1);
       else a.uptime = formatDuration(parseDuration(a.uptime) + dt);
     }
     if (!SimulatedRouter.autoActivity) return;
     for (const s of secrets) {
-      if (s.disabled === 'true' || active.some((a) => a.name === s.name)) continue;
+      if (s.disabled === 'true' || blocked.has(s.name) || active.some((a) => a.name === s.name)) continue;
       // akun contoh "offline" dibiarkan mati untuk demo; lainnya menyambung ulang dalam beberapa detik
       if (/offline/i.test(s.comment ?? '') || Math.random() > dt / 6) continue;
       this.pppConnect(s.name);
     }
   }
 
+  /** Simulasikan kabel putus (akun tidak bisa menyambung) atau pulih kembali. */
+  pppSetBlocked(names: string[], blocked: boolean) {
+    const set = new Set(this.s.pppBlocked ?? []);
+    for (const n of names) blocked ? set.add(n) : set.delete(n);
+    this.s.pppBlocked = [...set];
+    this.store.lastTick -= 1000; // paksa satu tick agar sesi langsung terputus
+    this.tick();
+    if (!blocked) for (const n of names) this.pppConnect(n);
+    this.store.dirty = true;
+  }
+
+  pppClearBlocked() {
+    const names = this.s.pppBlocked ?? [];
+    this.pppSetBlocked([...names], false);
+  }
+
   /** Simulasikan router klien menyambung PPPoE (dipakai tes dan demo). */
   pppConnect(name: string) {
     const s = this.table('/ppp/secret').find((x) => x.name === name);
     const active = this.table('/ppp/active');
-    if (!s || s.disabled === 'true' || active.some((a) => a.name === name)) return false;
+    if (!s || s.disabled === 'true' || (this.s.pppBlocked ?? []).includes(name) || active.some((a) => a.name === name)) return false;
     const isolated = /isolir/i.test(s.profile ?? '');
     active.push({
       '.id': this.newId(),

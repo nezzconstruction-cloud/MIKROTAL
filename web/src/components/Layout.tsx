@@ -63,6 +63,7 @@ const NAV: NavGroup[] = [
       { to: '/pppoe/vouchers', label: 'Voucher Isi Ulang' },
       { to: '/pppoe/packages', label: 'Paket & Harga', perm: 'customer.view' },
       { to: '/topology', label: 'Topologi ODC / ODP', perm: 'customer.view' },
+      { to: '/troubleshoot', label: 'Troubleshoot Jalur', perm: 'customer.view' },
     ],
   },
   {

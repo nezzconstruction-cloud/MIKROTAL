@@ -450,3 +450,94 @@ test('pelanggan terisolir dialihkan ke halaman isi voucher', async () => {
   assert.notEqual((await hit('/api/health', '192.168.88.50')).statusCode, 302, 'pengguna biasa tidak dialihkan');
   assert.notEqual((await hit('/api/health', '10.99.4.1')).statusCode, 302, 'di luar rentang pool isolir');
 });
+
+// ------------------------------------------------------- Troubleshoot jalur
+
+test('troubleshoot: lokasi ODC/ODP dan diagnosis segmen kabel yang putus', async () => {
+  const conn = (await ctx.routers.connection(routerId)) as SimulatedRouter;
+  const mkOdc = async (name: string, lat: number, lng: number) => (await api('POST', '/api/odcs', { routerId, name, ports: 8, lat, lng })).body;
+  const mkOdp = async (name: string, odcId: number, odcPort: number, lat: number, lng: number) => (await api('POST', '/api/odps', { routerId, name, odcId, odcPort, ports: 8, lat, lng })).body;
+  const loc = await api('PUT', '/api/topology/server-location', { routerId, lat: -6.2, lng: 106.8 });
+  assert.equal(loc.status, 200);
+  const badLat = await api('POST', '/api/odcs', { routerId, name: 'ODC-X', lat: 123, lng: 0 });
+  assert.equal(badLat.status, 400);
+
+  const a = await mkOdc('ODC-A', -6.201, 106.801);
+  const b = await mkOdc('ODC-B', -6.21, 106.81);
+  assert.equal(a.lat, -6.201);
+  const a1 = await mkOdp('ODP-A1', a.id, 1, -6.2015, 106.8015);
+  const a2 = await mkOdp('ODP-A2', a.id, 2, -6.202, 106.802);
+  const b1 = await mkOdp('ODP-B1', b.id, 1, -6.211, 106.811);
+  const b2 = await mkOdp('ODP-B2', b.id, 2, -6.212, 106.812);
+
+  const users: Record<string, number> = {};
+  let n = 0;
+  for (const [odp, count] of [[a1, 3], [a2, 2], [b1, 2], [b2, 2]] as const) {
+    for (let i = 1; i <= count; i++) {
+      const username = `${odp.name.toLowerCase()}-${i}`;
+      const c = await api('POST', '/api/customers', { routerId, name: `Rumah ${odp.name} ${i}`, username, password: 'rahasia', packageId: pkgId, odpId: odp.id, odpPort: i, initialValidity: '30d', lat: -6.2 - ++n / 1000, lng: 106.8 });
+      assert.equal(c.status, 200, JSON.stringify(c.body));
+      users[username] = c.body.id;
+      conn.pppConnect(username);
+    }
+  }
+  // pelanggan contoh yang tidak ikut skenario dianggap sudah online
+  conn.pppConnect('pelanggan01');
+  conn.pppConnect('pelanggan02');
+  await ctx.pppoe.sync(routerId);
+
+  let scan = await api('POST', '/api/troubleshoot/scan', { routerId });
+  assert.equal(scan.status, 200, JSON.stringify(scan.body));
+  assert.equal(scan.body.findings.length, 0, JSON.stringify(scan.body.findings));
+  assert.equal(scan.body.totals.offline, 0);
+
+  // 1) satu pelanggan mati, tetangganya di ODP yang sama hidup → kabel drop
+  let sim = await api('POST', '/api/troubleshoot/simulate', { routerId, target: 'customer', id: users['odp-a1-1'] });
+  assert.equal(sim.status, 200, JSON.stringify(sim.body));
+  assert.equal(sim.body.findings.length, 1);
+  assert.equal(sim.body.findings[0].kind, 'drop');
+  assert.equal(sim.body.findings[0].from.name, 'ODP-A1');
+  assert.equal(sim.body.findings[0].to.type, 'customer');
+  assert.match(sim.body.findings[0].affected[0].lastLog, /peer is not responding|logged out/);
+  assert.ok(sim.body.findings[0].distanceM > 0);
+
+  // 2) seluruh ODP-B1 mati, ODP-B2 hidup → kabel distribusi ODC-B → ODP-B1
+  sim = await api('POST', '/api/troubleshoot/simulate', { routerId, target: 'odp', id: b1.id });
+  const dist = sim.body.findings.find((f: any) => f.kind === 'distribution');
+  assert.ok(dist, JSON.stringify(sim.body.findings));
+  assert.equal(dist.from.name, 'ODC-B');
+  assert.equal(dist.to.name, 'ODP-B1');
+  assert.equal(dist.affected.length, 2);
+  assert.equal(dist.simultaneous, true);
+  assert.equal(dist.confidence, 'tinggi');
+  assert.match(dist.reason, /port 1 ODC-B/);
+  assert.ok(sim.body.findings.some((f: any) => f.kind === 'drop'), 'temuan drop sebelumnya tetap ada');
+
+  const alerts = await api('GET', '/api/alerts');
+  assert.ok(alerts.body.rows.some((r: any) => r.type === 'fiber.distribution' && /ODP-B1/.test(r.title)), 'notifikasi gangguan dikirim');
+
+  // 3) seluruh ODC-A mati (dua ODP) → kabel feeder server → ODC-A; temuan per-ODP tidak diulang
+  sim = await api('POST', '/api/troubleshoot/simulate', { routerId, target: 'odc', id: a.id });
+  const feeder = sim.body.findings.find((f: any) => f.kind === 'feeder');
+  assert.ok(feeder, JSON.stringify(sim.body.findings));
+  assert.equal(feeder.from.type, 'server');
+  assert.equal(feeder.to.name, 'ODC-A');
+  assert.equal(feeder.affected.length, 5);
+  assert.equal(sim.body.findings[0].kind, 'feeder', 'temuan terberat di urutan pertama');
+  assert.equal(sim.body.findings.filter((f: any) => f.to.name === 'ODP-A1' || f.from.name === 'ODP-A1').length, 0);
+
+  const quick = await api('GET', `/api/troubleshoot?routerId=${routerId}`);
+  assert.equal(quick.body.findings.length, sim.body.findings.length);
+  const topo = await api('GET', `/api/topology?routerId=${routerId}`);
+  assert.equal(topo.body.server.lat, -6.2);
+  assert.equal(topo.body.odcs.find((d: any) => d.name === 'ODC-A').lat, -6.201);
+
+  // 4) pulih
+  sim = await api('POST', '/api/troubleshoot/simulate', { routerId, target: 'clear' });
+  assert.equal(sim.body.findings.length, 0, JSON.stringify(sim.body.findings));
+  const after = await api('GET', '/api/alerts');
+  assert.ok(after.body.rows.some((r: any) => r.type === 'fiber.recovered'));
+
+  const opr = (await api('POST', '/api/auth/login', { username: 'konter', password: 'konter123' }, '')).body.token;
+  assert.equal((await api('POST', '/api/troubleshoot/scan', { routerId }, opr)).status, 403, 'reseller tidak boleh scan');
+});

@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { auditFrom, idParam, makeAuth, type AppContext } from '../context.js';
 import { isValidDuration } from '../lib/duration.js';
+import type { SimulatedRouter } from '../lib/routeros/simulator.js';
 import { PPP_VOUCHER_CHARSETS } from '../services/pppoe.js';
 import { HttpError } from '../services/vouchers.js';
 import { toCsv } from './business.js';
@@ -13,6 +14,9 @@ const username = z
   .min(2, 'Username minimal 2 karakter')
   .max(64)
   .regex(/^[A-Za-z0-9._@-]+$/, 'Username hanya huruf, angka, titik, strip, @');
+
+const lat = z.number().min(-90).max(90).nullable().optional();
+const lng = z.number().min(-180).max(180).nullable().optional();
 
 const packageSchema = z.object({
   routerId: z.number().int().positive(),
@@ -34,6 +38,8 @@ const customerSchema = z.object({
   packageId: z.number().int().positive().nullable().optional(),
   odpId: z.number().int().positive().nullable().optional(),
   odpPort: z.number().int().positive().nullable().optional(),
+  lat,
+  lng,
   initialValidity: duration('Format masa aktif tidak valid (contoh 30d)').default(''),
   unlimited: z.boolean().default(false),
   note: z.string().max(500).default(''),
@@ -47,6 +53,8 @@ const customerPatch = z.object({
   packageId: z.number().int().positive().nullable().optional(),
   odpId: z.number().int().positive().nullable().optional(),
   odpPort: z.number().int().positive().nullable().optional(),
+  lat,
+  lng,
   expiresAt: z.string().datetime().nullable().optional(),
   unlimited: z.boolean().optional(),
   note: z.string().max(500).optional(),
@@ -57,6 +65,8 @@ const odcSchema = z.object({
   name: z.string().trim().min(1, 'Nama ODC wajib diisi').max(60),
   location: z.string().trim().max(200).default(''),
   ports: z.coerce.number().int().min(1).max(288).default(12),
+  lat,
+  lng,
   note: z.string().max(500).default(''),
 });
 
@@ -67,6 +77,8 @@ const odpSchema = z.object({
   odcPort: z.number().int().positive().nullable().optional(),
   location: z.string().trim().max(200).default(''),
   ports: z.coerce.number().int().min(1).max(64).default(8),
+  lat,
+  lng,
   note: z.string().max(500).default(''),
 });
 
@@ -414,6 +426,45 @@ export async function pppoeRoutes(app: FastifyInstance, ctx: AppContext) {
     return ctx.pppoe.topology(idParam((req.query as any).routerId));
   });
 
+  app.put('/api/topology/server-location', { preHandler: auth('customer.write') }, async (req) => {
+    const b = z.object({ routerId: z.number().int().positive(), lat: z.number().min(-90).max(90).nullable(), lng: z.number().min(-180).max(180).nullable() }).parse(req.body);
+    ctx.pppoe.setServerLocation(b.routerId, b.lat, b.lng);
+    auditFrom(ctx, req, 'topology.server-location', String(b.routerId));
+    return { ok: true };
+  });
+
+  // ---- Troubleshoot jalur ----
+  /** Diagnosis cepat dari data terakhir (dipakai peta dan penyegaran otomatis). */
+  app.get('/api/troubleshoot', { preHandler: auth('customer.view') }, async (req) => {
+    return ctx.pppoe.diagnosis(idParam((req.query as any).routerId));
+  });
+
+  /** Scan penuh: ambil status terbaru dari router, cek interface server, lampirkan log. */
+  app.post('/api/troubleshoot/scan', { preHandler: auth('customer.view') }, async (req) => {
+    const b = z.object({ routerId: z.number().int().positive() }).parse(req.body);
+    const r = await ctx.pppoe.scan(b.routerId);
+    auditFrom(ctx, req, 'troubleshoot.scan', String(b.routerId), { findings: r.findings.length, offline: r.totals.offline });
+    return r;
+  });
+
+  /** Simulasi kabel putus, hanya untuk router simulasi (mencoba fitur tanpa gangguan sungguhan). */
+  app.post('/api/troubleshoot/simulate', { preHandler: auth('customer.write') }, async (req) => {
+    const b = z
+      .object({ routerId: z.number().int().positive(), target: z.enum(['odc', 'odp', 'customer', 'clear']), id: z.number().int().positive().optional() })
+      .parse(req.body);
+    const router = ctx.routers.require(b.routerId);
+    if (!router.simulate) throw new HttpError(400, 'Simulasi gangguan hanya tersedia untuk router simulasi');
+    const conn = (await ctx.routers.connection(b.routerId)) as SimulatedRouter;
+    if (b.target === 'clear') conn.pppClearBlocked();
+    else {
+      const where = b.target === 'odc' ? 'odp_id IN (SELECT id FROM odps WHERE odc_id = ?)' : b.target === 'odp' ? 'odp_id = ?' : 'id = ?';
+      const names = ctx.db.all<{ username: string }>(`SELECT username FROM customers WHERE router_id = ? AND ${where}`, [b.routerId, b.id ?? 0]).map((c) => c.username);
+      if (!names.length) throw new HttpError(400, 'Tidak ada pelanggan pada target ini');
+      conn.pppSetBlocked(names, true);
+    }
+    return ctx.pppoe.scan(b.routerId);
+  });
+
   const uniqueGuard = <T>(fn: () => T, msg: string): T => {
     try {
       return fn();
@@ -427,7 +478,7 @@ export async function pppoeRoutes(app: FastifyInstance, ctx: AppContext) {
     const b = odcSchema.parse(req.body);
     ctx.routers.require(b.routerId);
     const { lastId } = uniqueGuard(
-      () => ctx.db.run('INSERT INTO odcs (router_id, name, location, ports, note, created_at) VALUES (?, ?, ?, ?, ?, ?)', [b.routerId, b.name, b.location, b.ports, b.note, new Date().toISOString()]),
+      () => ctx.db.run('INSERT INTO odcs (router_id, name, location, ports, lat, lng, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [b.routerId, b.name, b.location, b.ports, b.lat ?? null, b.lng ?? null, b.note, new Date().toISOString()]),
       `ODC "${b.name}" sudah ada`,
     );
     auditFrom(ctx, req, 'odc.create', b.name);
@@ -441,7 +492,7 @@ export async function pppoeRoutes(app: FastifyInstance, ctx: AppContext) {
     if (!cur) throw new HttpError(404, 'ODC tidak ditemukan');
     const maxPort = ctx.db.get<{ m: number | null }>('SELECT MAX(odc_port) AS m FROM odps WHERE odc_id = ?', [id])!.m ?? 0;
     if (b.ports < maxPort) throw new HttpError(400, `Port ${maxPort} masih dipakai ODP. Pindahkan dulu sebelum mengurangi jumlah port.`);
-    uniqueGuard(() => ctx.db.run('UPDATE odcs SET name = ?, location = ?, ports = ?, note = ? WHERE id = ?', [b.name, b.location, b.ports, b.note, id]), `ODC "${b.name}" sudah ada`);
+    uniqueGuard(() => ctx.db.run('UPDATE odcs SET name = ?, location = ?, ports = ?, lat = ?, lng = ?, note = ? WHERE id = ?', [b.name, b.location, b.ports, b.lat ?? null, b.lng ?? null, b.note, id]), `ODC "${b.name}" sudah ada`);
     auditFrom(ctx, req, 'odc.update', b.name);
     return ctx.db.get('SELECT * FROM odcs WHERE id = ?', [id]);
   });
@@ -475,13 +526,15 @@ export async function pppoeRoutes(app: FastifyInstance, ctx: AppContext) {
     const up = checkOdcPort(b.routerId, b.odcId, b.odcPort);
     const { lastId } = uniqueGuard(
       () =>
-        ctx.db.run('INSERT INTO odps (router_id, odc_id, odc_port, name, location, ports, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [
+        ctx.db.run('INSERT INTO odps (router_id, odc_id, odc_port, name, location, ports, lat, lng, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [
           b.routerId,
           up.odcId,
           up.port,
           b.name,
           b.location,
           b.ports,
+          b.lat ?? null,
+          b.lng ?? null,
           b.note,
           new Date().toISOString(),
         ]),
@@ -500,7 +553,7 @@ export async function pppoeRoutes(app: FastifyInstance, ctx: AppContext) {
     const maxPort = ctx.db.get<{ m: number | null }>('SELECT MAX(odp_port) AS m FROM customers WHERE odp_id = ?', [id])!.m ?? 0;
     if (b.ports < maxPort) throw new HttpError(400, `Port ${maxPort} masih dipakai pelanggan. Pindahkan dulu sebelum mengurangi jumlah port.`);
     uniqueGuard(
-      () => ctx.db.run('UPDATE odps SET odc_id = ?, odc_port = ?, name = ?, location = ?, ports = ?, note = ? WHERE id = ?', [up.odcId, up.port, b.name, b.location, b.ports, b.note, id]),
+      () => ctx.db.run('UPDATE odps SET odc_id = ?, odc_port = ?, name = ?, location = ?, ports = ?, lat = ?, lng = ?, note = ? WHERE id = ?', [up.odcId, up.port, b.name, b.location, b.ports, b.lat ?? null, b.lng ?? null, b.note, id]),
       `ODP "${b.name}" sudah ada`,
     );
     auditFrom(ctx, req, 'odp.update', b.name);

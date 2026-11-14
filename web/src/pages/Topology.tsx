@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Boxes, MapPin, Network, Pencil, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle, Boxes, MapPin, Network, Pencil, Plus, Server, Stethoscope, Trash2 } from 'lucide-react';
 import clsx from 'clsx';
 import { del, get, post, put } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import type { TopoCustomer, TopoOdc, TopoOdp, Topology } from '../lib/pppoe';
+import { hasCoord, mapsLink, type Diagnosis, type TopoCustomer, type TopoOdc, type TopoOdp, type Topology } from '../lib/pppoe';
+import { buildFiberMap } from '../lib/fibermap';
+import { FiberMap, LocationPicker, MapLegend } from '../components/FiberMap';
 import { RequireRouter } from '../components/RequireRouter';
-import { Badge, Button, Card, EmptyState, ErrorBox, Field, IconButton, Input, Loading, Modal, PageHeader, Select, useAction, useFeedback } from '../components/ui';
+import { Badge, Button, Card, EmptyState, ErrorBox, Field, IconButton, Input, Loading, Modal, PageHeader, Select, Tabs, Toggle, useAction, useFeedback } from '../components/ui';
 
 type PortState = 'online' | 'offline' | 'isolated' | 'disabled' | 'empty';
 
@@ -30,7 +32,7 @@ function stateOf(c: TopoCustomer | undefined): PortState {
 function OdcModal({ routerId, odc, onClose }: { routerId: number; odc?: TopoOdc; onClose: () => void }) {
   const { run, busy } = useAction();
   const qc = useQueryClient();
-  const [f, setF] = useState({ name: odc?.name ?? '', location: odc?.location ?? '', ports: String(odc?.ports ?? 12), note: odc?.note ?? '' });
+  const [f, setF] = useState({ name: odc?.name ?? '', location: odc?.location ?? '', ports: String(odc?.ports ?? 12), note: odc?.note ?? '', lat: odc?.lat ?? (null as number | null), lng: odc?.lng ?? (null as number | null) });
   const save = async () => {
     const body = { routerId, ...f, ports: Number(f.ports) };
     const r = await run(() => (odc ? put(`/api/odcs/${odc.id}`, body) : post('/api/odcs', body)), 'ODC disimpan');
@@ -43,7 +45,6 @@ function OdcModal({ routerId, odc, onClose }: { routerId: number; odc?: TopoOdc;
     <Modal
       open
       onClose={onClose}
-      size="sm"
       title={odc ? `Ubah ${odc.name}` : 'ODC baru'}
       footer={
         <>
@@ -60,9 +61,10 @@ function OdcModal({ routerId, odc, onClose }: { routerId: number; odc?: TopoOdc;
         <Field label="Nama ODC" required>
           <Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="ODC-01" autoFocus />
         </Field>
-        <Field label="Lokasi">
+        <Field label="Keterangan lokasi">
           <Input value={f.location} onChange={(e) => setF({ ...f, location: e.target.value })} placeholder="Depan pos ronda RW 05" />
         </Field>
+        <LocationPicker label="Titik lokasi ODC" value={f} onChange={(v) => setF((x) => ({ ...x, ...v }))} />
         <Field label="Jumlah port keluaran" hint="Jumlah ODP yang bisa dilayani ODC ini">
           <Input type="number" min={1} max={288} value={f.ports} onChange={(e) => setF({ ...f, ports: e.target.value })} />
         </Field>
@@ -84,6 +86,8 @@ function OdpModal({ routerId, odp, odcId, topo, onClose }: { routerId: number; o
     note: odp?.note ?? '',
     odcId: odp?.odc_id ?? odcId ?? (null as number | null),
     odcPort: odp?.odc_port ?? (null as number | null),
+    lat: odp?.lat ?? (null as number | null),
+    lng: odp?.lng ?? (null as number | null),
   });
   const odc = topo.odcs.find((d) => d.id === f.odcId);
   const taken = new Map(odc?.odps.filter((o) => o.id !== odp?.id && o.odc_port).map((o) => [o.odc_port!, o.name]));
@@ -124,9 +128,10 @@ function OdpModal({ routerId, odp, odcId, topo, onClose }: { routerId: number; o
             ))}
           </Select>
         </Field>
-        <Field label="Lokasi" className="sm:col-span-2">
+        <Field label="Keterangan lokasi" className="sm:col-span-2">
           <Input value={f.location} onChange={(e) => setF({ ...f, location: e.target.value })} placeholder="Tiang Gang Mawar" />
         </Field>
+        <LocationPicker label="Titik lokasi ODP" value={f} onChange={(v) => setF((x) => ({ ...x, ...v }))} />
         <Field label="Terhubung ke ODC">
           <Select value={f.odcId ?? ''} onChange={(e) => setF({ ...f, odcId: e.target.value ? Number(e.target.value) : null, odcPort: null })}>
             <option value="">— langsung dari server —</option>
@@ -157,6 +162,43 @@ function OdpModal({ routerId, odp, odcId, topo, onClose }: { routerId: number; o
   );
 }
 
+function ServerModal({ topo, onClose }: { topo: Topology; onClose: () => void }) {
+  const { run, busy } = useAction();
+  const qc = useQueryClient();
+  const [v, setV] = useState({ lat: topo.server.lat, lng: topo.server.lng });
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Lokasi server ${topo.server.name}`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Batal
+          </Button>
+          <Button
+            loading={busy}
+            onClick={async () => {
+              const r = await run(() => put('/api/topology/server-location', { routerId: topo.server.id, lat: v.lat, lng: v.lng }), 'Lokasi server disimpan');
+              if (r) {
+                void qc.invalidateQueries({ queryKey: ['topology'] });
+                onClose();
+              }
+            }}
+          >
+            Simpan
+          </Button>
+        </>
+      }
+    >
+      <p className="mb-4 text-sm text-muted">Titik ruang server/OLT. Dipakai sebagai pangkal kabel feeder ke setiap ODC di peta.</p>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <LocationPicker label="Titik lokasi server" value={v} onChange={setV} />
+      </div>
+    </Modal>
+  );
+}
+
 function OdpCard({ odp, write, onEdit, onDelete }: { odp: TopoOdp; write: boolean; onEdit: () => void; onDelete: () => void }) {
   const navigate = useNavigate();
   const byPort = new Map(odp.customers.filter((c) => c.odp_port).map((c) => [c.odp_port!, c]));
@@ -173,6 +215,11 @@ function OdpCard({ odp, write, onEdit, onDelete }: { odp: TopoOdp; write: boolea
             <p className="mt-0.5 flex items-center gap-1 truncate text-[11px] text-muted">
               <MapPin className="size-3 shrink-0" /> {odp.location}
             </p>
+          )}
+          {hasCoord(odp) && (
+            <a href={mapsLink(odp.lat, odp.lng)} target="_blank" rel="noreferrer" className="mt-0.5 block font-mono text-[10px] text-brand hover:underline">
+              {odp.lat.toFixed(5)}, {odp.lng.toFixed(5)}
+            </a>
           )}
         </div>
         {write && (
@@ -236,13 +283,33 @@ function OdpCard({ odp, write, onEdit, onDelete }: { odp: TopoOdp; write: boolea
   );
 }
 
+function MapView({ topo, diag, showCustomers, setShowCustomers }: { topo: Topology; diag?: Diagnosis; showCustomers: boolean; setShowCustomers: (v: boolean) => void }) {
+  const { nodes, lines, missing } = buildFiberMap(topo, diag, { customers: showCustomers });
+  return (
+    <Card className="space-y-3 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <MapLegend customers={showCustomers} />
+        <Toggle checked={showCustomers} onChange={setShowCustomers} label="Tampilkan rumah pelanggan" />
+      </div>
+      <FiberMap nodes={nodes} lines={lines} height={520} />
+      <p className="text-[11px] text-subtle">
+        Garis ditarik lurus antar titik, bukan mengikuti rute kabel sebenarnya.
+        {missing > 0 && ` ${missing} titik (server/ODC/ODP) belum punya koordinat dan tidak tampil: isi lewat tombol ubah.`}
+      </p>
+    </Card>
+  );
+}
+
 function Inner({ routerId, routerName }: { routerId: number; routerName: string }) {
   const { can } = useAuth();
   const qc = useQueryClient();
   const { confirm } = useFeedback();
   const { run } = useAction();
   const write = can('customer.write');
-  const [modal, setModal] = useState<{ type: 'odc'; odc?: TopoOdc } | { type: 'odp'; odp?: TopoOdp; odcId?: number } | null>(null);
+  const [modal, setModal] = useState<{ type: 'odc'; odc?: TopoOdc } | { type: 'odp'; odp?: TopoOdp; odcId?: number } | { type: 'server' } | null>(null);
+  const [view, setView] = useState<'diagram' | 'map'>('diagram');
+  const [showCustomers, setShowCustomers] = useState(true);
+  const { data: diag } = useQuery({ queryKey: ['troubleshoot', routerId], queryFn: () => get<Diagnosis>('/api/troubleshoot', { routerId }), refetchInterval: 30000 });
   const { data, isLoading, error, refetch } = useQuery({ queryKey: ['topology', routerId], queryFn: () => get<Topology>('/api/topology', { routerId }), refetchInterval: 20000 });
 
   const removeOdc = async (d: TopoOdc) => {
@@ -271,6 +338,9 @@ function Inner({ routerId, routerName }: { routerId: number; routerName: string 
         actions={
           write && (
             <>
+              <Button variant="secondary" icon={<Server className="size-4" />} onClick={() => setModal({ type: 'server' })}>
+                Lokasi server
+              </Button>
               <Button variant="secondary" icon={<Plus className="size-4" />} onClick={() => setModal({ type: 'odp' })}>
                 ODP baru
               </Button>
@@ -296,6 +366,24 @@ function Inner({ routerId, routerName }: { routerId: number; routerName: string 
         </Card>
       ) : (
         <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Tabs
+              value={view}
+              onChange={setView}
+              items={[
+                { value: 'diagram', label: 'Diagram port' },
+                { value: 'map', label: 'Peta jalur' },
+              ]}
+            />
+            {(diag?.findings.length ?? 0) > 0 && (
+              <Link to="/troubleshoot" className="flex items-center gap-1.5 rounded-lg bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-500/20 dark:text-rose-400">
+                <Stethoscope className="size-3.5" /> {diag!.findings.length} indikasi gangguan jalur — buka Troubleshoot
+              </Link>
+            )}
+          </div>
+          {view === 'map' && <MapView topo={data} diag={diag} showCustomers={showCustomers} setShowCustomers={setShowCustomers} />}
+          {view === 'diagram' && (
+          <>
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted">
             <span>
               <b className="text-fg">{data.odcs.length}</b> ODC
@@ -383,8 +471,11 @@ function Inner({ routerId, routerName }: { routerId: number; routerName: string 
               </div>
             </Card>
           )}
+          </>
+          )}
         </div>
       )}
+      {modal?.type === 'server' && data && <ServerModal topo={data} onClose={() => setModal(null)} />}
       {modal?.type === 'odc' && <OdcModal routerId={routerId} odc={modal.odc} onClose={() => setModal(null)} />}
       {modal?.type === 'odp' && data && <OdpModal routerId={routerId} odp={modal.odp} odcId={modal.odcId} topo={data} onClose={() => setModal(null)} />}
     </div>

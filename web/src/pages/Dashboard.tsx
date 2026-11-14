@@ -219,9 +219,9 @@ export default function Dashboard() {
               ))}
             </div>
             {pp.odp.down > 0 && (
-              <p className="mx-4 mb-4 flex items-center gap-2 rounded-lg bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-600 dark:text-rose-400">
-                <AlertTriangle className="size-4" /> {pp.odp.down} ODP mati total — semua pelanggannya offline bersamaan.
-              </p>
+              <Link to="/troubleshoot" className="mx-4 mb-4 flex items-center gap-2 rounded-lg bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-500/20 dark:text-rose-400">
+                <AlertTriangle className="size-4" /> {pp.odp.down} jalur kabel diduga putus — buka Troubleshoot Jalur untuk lokasi dan langkah pengecekan.
+              </Link>
             )}
           </Card>
           <Card>
