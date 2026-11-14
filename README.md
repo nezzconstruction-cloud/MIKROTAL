@@ -1,8 +1,68 @@
 # MIKROTAL — Mikrotik Digital
 
-Dashboard web untuk **monitoring, konfigurasi MikroTik, manajemen hotspot, dan penjualan voucher**. Satu aplikasi untuk banyak router, realtime, dan bisa dipakai dari HP. Winbox atau Mikhmon tidak diperlukan untuk pekerjaan sehari-hari.
+**MIKROTAL** adalah aplikasi web untuk mengelola jaringan MikroTik dari satu tempat: monitoring router, konfigurasi tanpa Winbox, hotspot dan voucher, serta pengelolaan **RT/RW Net berbasis PPPoE** lewat ODC dan ODP. Aplikasi dipasang di server sendiri, dibuka dari browser komputer atau HP, dan berbahasa Indonesia.
 
 ![Dashboard](docs/screenshots/dashboard.png)
+
+## Untuk siapa aplikasi ini
+
+- **Pengelola RT/RW Net** yang membagikan internet lewat fiber (OLT → ODC → ODP → rumah) dengan akun PPPoE dan sistem voucher.
+- **Pemilik hotspot voucher** (warung, kos, kafe) yang ingin generate, cetak, dan memantau voucher tanpa Mikhmon.
+- **Teknisi jaringan** yang butuh memantau banyak router dan mengubah konfigurasi dari HP.
+
+## Ringkasan kemampuan
+
+| Kebutuhan | Yang dikerjakan MIKROTAL |
+|---|---|
+| Tahu kondisi jaringan | Status router, CPU, RAM, trafik live, pelanggan online/offline, notifikasi ke Telegram |
+| Mengelola pelanggan rumah | Data pelanggan terhubung ke akun PPPoE, paket, masa aktif, dan port ODP |
+| Menagih tanpa repot | Voucher isi ulang masa aktif, isolir otomatis saat habis, halaman isi ulang untuk pelanggan |
+| Mencari kabel putus | Peta jalur server → ODC → ODP → rumah dan scan yang menunjuk segmen yang diduga putus |
+| Menjual voucher hotspot | Generate massal, cetak dengan QR, reseller bersaldo, laporan penjualan |
+| Mengatur router | 40+ menu RouterOS (firewall, queue, DHCP, PPP, dll) tanpa Winbox |
+
+| Pelanggan PPPoE | Topologi ODC / ODP |
+|---|---|
+| ![Pelanggan](docs/screenshots/pelanggan.png) | ![Topologi](docs/screenshots/topologi.png) |
+
+| Troubleshoot jalur kabel | Halaman isi ulang pelanggan |
+|---|---|
+| ![Troubleshoot](docs/screenshots/troubleshoot.png) | <img src="docs/screenshots/isi-ulang.png" alt="Isi ulang" width="260"> |
+
+## Cara install
+
+Butuh **Node.js 22.13 atau lebih baru** dan **Git**. Berjalan di Windows, Linux, dan macOS.
+
+```bash
+git clone https://github.com/nezzconstruction-cloud/MIKROTAL.git
+cd MIKROTAL
+cp .env.example .env        # Windows: copy .env.example .env
+```
+
+Buka file `.env`, ganti `APP_SECRET` dan `ADMIN_PASSWORD`, lalu:
+
+```bash
+npm install
+npm run build
+npm start
+```
+
+Buka `http://localhost:8080` (atau `http://IP-SERVER:8080` dari perangkat lain) dan login dengan `admin` serta password dari `.env` (bawaan `admin123`).
+
+Saat pertama jalan, otomatis dibuat:
+- akun **admin** (segera ganti password di menu *Akun saya*);
+- **Demo Router (Simulasi)** beserta contoh paket, ODC/ODP, pelanggan, profil hotspot, dan satu reseller, supaya semua fitur bisa langsung dicoba tanpa MikroTik. Hapus setelah menambahkan router asli, atau set `SEED_DEMO=false`.
+
+Pilihan lain dengan Docker:
+
+```bash
+cp .env.example .env        # ganti APP_SECRET dan ADMIN_PASSWORD
+docker compose up -d --build
+```
+
+Panduan lengkap (update dari versi sebelumnya, cadangan data, menjalankan otomatis saat server menyala, dan masalah yang sering muncul) ada di **[INSTALL.md](INSTALL.md)**.
+
+Setelah terpasang, lanjutkan ke [Menghubungkan MikroTik asli](#menghubungkan-mikrotik-asli) dan [Alur PPPoE (RT/RW Net)](#alur-pppoe-rtrw-net).
 
 ## Fitur utama
 
@@ -69,36 +129,6 @@ Dashboard web untuk **monitoring, konfigurasi MikroTik, manajemen hotspot, dan p
 - **server/**: Node.js 22 + TypeScript + Fastify. Klien RouterOS API ditulis sendiri tanpa library (mendukung TLS, login lama/baru, banyak perintah paralel). Database SQLite bawaan Node (`node:sqlite`), jadi tidak perlu compile modul native.
 - **web/**: React 19 + Vite + Tailwind CSS 4 + TanStack Query + Recharts.
 - **Mode simulasi**: router virtual yang meniru RouterOS (trafik bergerak, pengguna hotspot login/logout, voucher terpakai). Berguna untuk demo, pelatihan, dan pengujian tanpa perangkat asli.
-
-## Mulai cepat
-
-> Panduan langkah demi langkah untuk instal baru, update dari versi sebelumnya, dan menjalankan otomatis ada di [INSTALL.md](INSTALL.md).
-
-### Opsi A — Docker (disarankan untuk server/VPS)
-
-```bash
-git clone https://github.com/nezzconstruction-cloud/MIKROTAL.git
-cd MIKROTAL
-cp .env.example .env        # ganti APP_SECRET dan ADMIN_PASSWORD
-docker compose up -d --build
-```
-
-Buka `http://IP-SERVER:8080`, lalu login dengan `admin` / `admin123` (atau sesuai `.env`).
-
-### Opsi B — Node.js langsung (Windows/Linux/macOS)
-
-Butuh **Node.js 22.13 atau lebih baru**.
-
-```bash
-npm install
-cp .env.example .env        # Windows: copy .env.example .env
-npm run build
-npm start
-```
-
-Saat pertama jalan, otomatis dibuat:
-- akun **admin / admin123** (segera ganti di menu *Akun saya*);
-- **Demo Router (Simulasi)** beserta contoh profil harga dan satu reseller, supaya semua fitur bisa langsung dicoba. Hapus setelah menambahkan router asli, atau set `SEED_DEMO=false`.
 
 ## Menghubungkan MikroTik asli
 

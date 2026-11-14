@@ -2,8 +2,6 @@
 
 Panduan ini untuk versi terbaru yang memuat fitur RT/RW Net: pelanggan PPPoE, voucher isi ulang, isolir, topologi ODC/ODP dengan peta, dan Troubleshoot Jalur.
 
-> **Versi terbaru ada di branch `claude/relaxed-johnson-3ibhie`** selama pull request-nya belum digabung ke `main`. Setelah digabung, ganti nama branch di perintah di bawah menjadi `main`.
-
 ## Yang dibutuhkan
 
 | Kebutuhan | Keterangan |
@@ -35,10 +33,6 @@ git clone https://github.com/nezzconstruction-cloud/MIKROTAL.git
 
 ```bash
 cd MIKROTAL
-```
-
-```bash
-git checkout claude/relaxed-johnson-3ibhie
 ```
 
 ### 2. Buat file pengaturan `.env`
@@ -124,11 +118,7 @@ xcopy data data-backup /E /I
 ### 3. Ambil kode terbaru
 
 ```bash
-git fetch origin
-```
-
-```bash
-git checkout claude/relaxed-johnson-3ibhie
+git checkout main
 ```
 
 ```bash
@@ -169,10 +159,6 @@ git clone https://github.com/nezzconstruction-cloud/MIKROTAL.git
 
 ```bash
 cd MIKROTAL
-```
-
-```bash
-git checkout claude/relaxed-johnson-3ibhie
 ```
 
 ```bash
