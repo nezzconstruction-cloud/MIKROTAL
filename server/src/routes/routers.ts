@@ -52,8 +52,15 @@ export async function routerRoutes(app: FastifyInstance, ctx: AppContext) {
   };
 
   // ---- CRUD router ----
-  app.get('/api/routers', { preHandler: auth() }, async () => {
-    return ctx.routers.list().map((r) => ({ ...publicRouter(r), snapshot: ctx.monitor.latest.get(r.id) ?? null }));
+  app.get('/api/routers', { preHandler: auth() }, async (req) => {
+    const list = ctx.routers.list();
+    if (!hasPermission(req.user.role, 'router.view')) {
+      // Reseller cukup tahu nama router untuk memilih tempat voucher dibuat
+      return list
+        .filter((r) => r.enabled)
+        .map((r) => ({ id: r.id, name: r.name, location: r.location, enabled: true, simulate: !!r.simulate, hotspot_dns: r.hotspot_dns, snapshot: null }));
+    }
+    return list.map((r) => ({ ...publicRouter(r), snapshot: ctx.monitor.latest.get(r.id) ?? null }));
   });
 
   app.get('/api/routers/:id', { preHandler: auth('router.view') }, async (req) => {

@@ -1,0 +1,16 @@
+services:
+  mikrotal:
+    build: .
+    image: mikrotal:latest
+    container_name: mikrotal
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      APP_SECRET: ${APP_SECRET:-ganti-dengan-string-acak-panjang}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      SEED_DEMO: ${SEED_DEMO:-true}
+      TZ: Asia/Jakarta
+    volumes:
+      - ./data:/app/data

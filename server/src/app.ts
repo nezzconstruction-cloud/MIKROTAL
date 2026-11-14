@@ -90,7 +90,7 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
   const here = path.dirname(fileURLToPath(import.meta.url));
   const webDist = config.webDist ?? [path.resolve(here, '../../web/dist'), path.resolve(here, '../web/dist'), path.resolve(process.cwd(), 'web/dist')].find((p) => fs.existsSync(path.join(p, 'index.html')));
   if (webDist && fs.existsSync(path.join(webDist, 'index.html'))) {
-    await app.register(fastifyStatic, { root: webDist, prefix: '/', wildcard: false });
+    await app.register(fastifyStatic, { root: webDist, prefix: '/' });
     app.setNotFoundHandler((req, reply) => {
       if (req.url.startsWith('/api/')) return reply.status(404).send({ error: 'Endpoint tidak ditemukan' });
       return reply.sendFile('index.html');
