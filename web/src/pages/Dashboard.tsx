@@ -1,11 +1,12 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ArrowDown, ArrowUp, Banknote, CheckCircle2, Cpu, MemoryStick, Plus, Router as RouterIcon, Ticket, TrendingUp, Users, Wallet, Wifi } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, Banknote, Cable, CheckCircle2, Cpu, MemoryStick, Plus, Router as RouterIcon, Ticket, TrendingUp, Users, Wallet, Wifi } from 'lucide-react';
 import clsx from 'clsx';
 import { get } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useRealtime, type Snapshot } from '../lib/realtime';
-import { formatBps, formatMoney, formatNumber, humanDuration, pct, timeAgo } from '../lib/format';
+import { formatBps, formatDate, formatMoney, formatNumber, humanDuration, pct, timeAgo } from '../lib/format';
+import { daysLeft } from '../lib/pppoe';
 import { Badge, Button, Card, CardHeader, EmptyState, ErrorBox, Loading, PageHeader, Progress, StatCard, StatusDot } from '../components/ui';
 import { RevenueChart } from '../components/charts';
 import { useRouters } from '../lib/router-context';
@@ -13,12 +14,19 @@ import { useRouters } from '../lib/router-context';
 interface DashboardData {
   routers: { id: number; name: string; location: string; status: string; status_message: string; enabled: boolean; simulate: boolean; snapshot: Snapshot | null }[];
   totals: { routers: number; online: number; offline: number; hotspotActive: number; pppActive: number; rx: number; tx: number };
-  revenue: { today: number; week: number; month: number; daily: { date: string; direct: number; reseller: number; count: number }[] };
+  revenue: { today: number; week: number; month: number; daily: { date: string; direct: number; reseller: number; pppoe: number; count: number }[] };
   vouchers: Record<string, number>;
   topProfiles: { profile: string; count: number; amount: number }[];
   alerts: { id: number; level: string; title: string; message: string; router_name?: string; created_at: string }[];
   unreadAlerts: number;
   reseller: { id: number; name: string; balance: number; discount: number } | null;
+  pppoe: {
+    customers: { total: number; online: number; active: number; isolated: number; disabled: number; offline: number; expiring: number };
+    remindDays: number;
+    expiringList: { id: number; name: string; username: string; phone: string; expires_at: string; online: number; package_name: string | null }[];
+    vouchers: { unused: number; used: number };
+    odp: { total: number; ports: number; used: number; down: number };
+  } | null;
 }
 
 function greeting() {
@@ -110,6 +118,7 @@ export default function Dashboard() {
   const tx = routers.reduce((s, r) => s + (r.snap?.online ? r.snap.tx ?? 0 : 0), 0);
   const v = data.vouchers;
   const isReseller = user?.role === 'reseller';
+  const pp = data.pppoe;
 
   return (
     <div className="space-y-5">
@@ -121,11 +130,20 @@ export default function Dashboard() {
         }
         subtitle={new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
         actions={
-          can('voucher.write') && (
-            <Link to="/vouchers/generate">
-              <Button icon={<Plus className="size-4" />}>Buat voucher</Button>
-            </Link>
-          )
+          <>
+            {can('customer.view') && (
+              <Link to="/customers">
+                <Button variant="secondary" icon={<Users className="size-4" />}>
+                  Pelanggan
+                </Button>
+              </Link>
+            )}
+            {can('voucher.write') && (
+              <Link to="/pppoe/vouchers">
+                <Button icon={<Plus className="size-4" />}>Voucher PPPoE</Button>
+              </Link>
+            )}
+          </>
         }
       />
 
@@ -133,13 +151,24 @@ export default function Dashboard() {
         {isReseller && data.reseller ? (
           <StatCard label="Saldo Anda" value={formatMoney(data.reseller.balance)} icon={<Wallet className="size-5" />} tone="green" sub={`Diskon ${data.reseller.discount}%`} />
         ) : (
-          <StatCard label="Pendapatan hari ini" value={formatMoney(data.revenue.today)} icon={<Banknote className="size-5" />} tone="green" sub={`${formatNumber(v.activatedToday ?? 0)} voucher aktif hari ini`} />
+          <StatCard label="Pendapatan hari ini" value={formatMoney(data.revenue.today)} icon={<Banknote className="size-5" />} tone="green" sub={`PPPoE + hotspot • ${formatNumber(v.activatedToday ?? 0)} voucher hotspot aktif hari ini`} />
         )}
         <StatCard label="Pendapatan bulan ini" value={formatMoney(data.revenue.month)} icon={<TrendingUp className="size-5" />} tone="violet" sub={`7 hari: ${formatMoney(data.revenue.week)}`} />
         {isReseller ? (
           <StatCard label="Voucher belum terpakai" value={formatNumber(v.unused ?? 0)} icon={<Ticket className="size-5" />} tone="cyan" sub={`${formatNumber(v.active ?? 0)} sedang online`} />
         ) : (
-          <StatCard label="Pengguna hotspot online" value={formatNumber(hotspotActive)} icon={<Users className="size-5" />} tone="cyan" sub={`PPP aktif: ${formatNumber(routers.reduce((s, r) => s + (r.snap?.online ? r.snap.pppActive ?? 0 : 0), 0))}`} />
+          <StatCard
+            label="Pelanggan PPPoE online"
+            value={
+              <>
+                {formatNumber(pp?.customers.online ?? 0)}
+                <span className="text-base font-medium text-muted">/{formatNumber(pp?.customers.total ?? 0)}</span>
+              </>
+            }
+            icon={<Cable className="size-5" />}
+            tone="cyan"
+            sub={`${formatNumber(pp?.customers.isolated ?? 0)} terisolir • hotspot online ${formatNumber(hotspotActive)}`}
+          />
         )}
         {isReseller ? (
           <StatCard label="Voucher terpakai" value={formatNumber((v.used ?? 0) + (v.expired ?? 0))} icon={<CheckCircle2 className="size-5" />} tone="orange" />
@@ -170,15 +199,63 @@ export default function Dashboard() {
         )}
       </div>
 
+      {pp && (
+        <div className="grid gap-5 xl:grid-cols-3">
+          <Card className="xl:col-span-2">
+            <CardHeader title="Jaringan PPPoE" subtitle="Pelanggan rumah lewat ODC / ODP" icon={<Cable className="size-4" />} actions={<Link to="/topology" className="text-xs font-medium text-brand hover:underline">Lihat topologi</Link>} />
+            <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-3 lg:grid-cols-6">
+              {[
+                { label: 'Online', value: pp.customers.online, to: '/customers?status=online', cls: 'text-emerald-500' },
+                { label: 'Offline', value: pp.customers.offline, to: '/customers?status=offline', cls: pp.customers.offline ? 'text-rose-500' : '' },
+                { label: 'Terisolir', value: pp.customers.isolated, to: '/customers?status=isolated', cls: pp.customers.isolated ? 'text-amber-500' : '' },
+                { label: `Habis ≤ ${pp.remindDays} hari`, value: pp.customers.expiring, to: '/customers?status=expiring', cls: pp.customers.expiring ? 'text-amber-500' : '' },
+                { label: 'Stok voucher', value: pp.vouchers.unused, to: '/pppoe/vouchers', cls: '' },
+                { label: 'Port ODP', value: `${pp.odp.used}/${pp.odp.ports}`, to: '/topology', cls: pp.odp.down ? 'text-rose-500' : '' },
+              ].map((x) => (
+                <Link key={x.label} to={x.to} className="rounded-xl bg-surface-2 p-3 transition hover:ring-1 hover:ring-brand/40">
+                  <p className="truncate text-[11px] text-muted">{x.label}</p>
+                  <p className={clsx('mt-1 text-xl font-bold tabular-nums', x.cls)}>{typeof x.value === 'number' ? formatNumber(x.value) : x.value}</p>
+                </Link>
+              ))}
+            </div>
+            {pp.odp.down > 0 && (
+              <Link to="/troubleshoot" className="mx-4 mb-4 flex items-center gap-2 rounded-lg bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-500/20 dark:text-rose-400">
+                <AlertTriangle className="size-4" /> {pp.odp.down} jalur kabel diduga putus — buka Troubleshoot Jalur untuk lokasi dan langkah pengecekan.
+              </Link>
+            )}
+          </Card>
+          <Card>
+            <CardHeader title="Masa aktif hampir habis" icon={<Ticket className="size-4" />} actions={<Link to="/customers?status=expiring" className="text-xs font-medium text-brand hover:underline">Lihat semua</Link>} />
+            <div className="divide-y divide-line">
+              {!pp.expiringList.length && <p className="px-5 py-8 text-center text-sm text-muted">Tidak ada pelanggan yang habis dalam {pp.remindDays} hari.</p>}
+              {pp.expiringList.map((c) => {
+                const d = daysLeft(c.expires_at) ?? 0;
+                return (
+                  <Link key={c.id} to={`/customers?id=${c.id}`} className="flex items-center justify-between gap-3 px-5 py-2.5 hover:bg-surface-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{c.name}</p>
+                      <p className="truncate text-[11px] text-subtle">
+                        {c.package_name ?? c.username} • {formatDate(c.expires_at, false)}
+                      </p>
+                    </div>
+                    <Badge tone={d <= 1 ? 'red' : 'yellow'}>{d <= 0 ? 'hari ini' : `${d} hari lagi`}</Badge>
+                  </Link>
+                );
+              })}
+            </div>
+          </Card>
+        </div>
+      )}
+
       <div className="grid gap-5 xl:grid-cols-3">
         <Card className="xl:col-span-2">
-          <CardHeader title="Penjualan 7 hari terakhir" subtitle="Langsung dihitung saat voucher dipakai, reseller saat pembelian" icon={<TrendingUp className="size-4" />} />
+          <CardHeader title="Penjualan 7 hari terakhir" subtitle="PPPoE saat voucher diisikan, hotspot saat dipakai, reseller saat pembelian" icon={<TrendingUp className="size-4" />} />
           <div className="p-4">
             <RevenueChart data={data.revenue.daily} />
           </div>
         </Card>
         <Card>
-          <CardHeader title="Status voucher" icon={<Ticket className="size-4" />} actions={<Link to="/vouchers" className="text-xs font-medium text-brand hover:underline">Lihat semua</Link>} />
+          <CardHeader title="Status voucher hotspot" icon={<Ticket className="size-4" />} actions={<Link to="/vouchers" className="text-xs font-medium text-brand hover:underline">Lihat semua</Link>} />
           <div className="space-y-3 p-5">
             {[
               { k: 'unused', label: 'Belum dipakai', tone: 'bg-cyan-500' },
@@ -203,7 +280,7 @@ export default function Dashboard() {
             })}
             {data.topProfiles.length > 0 && (
               <div className="border-t border-line pt-4">
-                <p className="mb-2 text-xs font-semibold text-muted">Profil terlaris bulan ini</p>
+                <p className="mb-2 text-xs font-semibold text-muted">Paket terlaris bulan ini</p>
                 {data.topProfiles.map((p, i) => (
                   <div key={p.profile} className="flex items-center justify-between py-1 text-sm">
                     <span className="flex items-center gap-2">

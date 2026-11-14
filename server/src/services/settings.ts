@@ -30,6 +30,24 @@ export interface AppSettings {
     defaultPrefix: string;
     loginUrl: string;
   };
+  pppoe: {
+    /** Nama profil PPP untuk pelanggan yang masa aktifnya habis. */
+    isolirProfile: string;
+    isolirPool: string;
+    isolirPoolRange: string;
+    isolirGateway: string;
+    /** Alamat IP server MIKROTAL tujuan pengalihan halaman isolir (kosong = tanpa pengalihan). */
+    portalAddress: string;
+    portalPort: number;
+    /** Pelanggan dianggap "hampir habis" bila sisa masa aktif <= sekian hari. */
+    remindDays: number;
+    voucherLength: number;
+    voucherCharset: string;
+    voucherPrefix: string;
+    /** URL halaman isi ulang yang dicetak pada voucher. */
+    topupUrl: string;
+    odpDownAlert: boolean;
+  };
   backup: {
     enabled: boolean;
     hour: number;
@@ -54,6 +72,20 @@ export const DEFAULT_SETTINGS: AppSettings = {
     defaultLength: 6,
     defaultPrefix: '',
     loginUrl: 'http://hotspot.lan/login',
+  },
+  pppoe: {
+    isolirProfile: 'ISOLIR',
+    isolirPool: 'isolir-pool',
+    isolirPoolRange: '10.99.0.2-10.99.3.254',
+    isolirGateway: '10.99.0.1',
+    portalAddress: '',
+    portalPort: 80,
+    remindDays: 3,
+    voucherLength: 10,
+    voucherCharset: 'numeric',
+    voucherPrefix: '',
+    topupUrl: '',
+    odpDownAlert: true,
   },
   backup: { enabled: false, hour: 3 },
 };

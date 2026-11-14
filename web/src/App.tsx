@@ -32,6 +32,13 @@ const Audit = lazy(() => import('./pages/Audit'));
 const SettingsPage = lazy(() => import('./pages/Settings'));
 const Account = lazy(() => import('./pages/Account'));
 const PublicCheck = lazy(() => import('./pages/PublicCheck'));
+const Customers = lazy(() => import('./pages/Customers'));
+const PppPackages = lazy(() => import('./pages/PppPackages'));
+const PppVouchers = lazy(() => import('./pages/PppVouchers'));
+const PppVoucherPrint = lazy(() => import('./pages/PppVoucherPrint'));
+const Topology = lazy(() => import('./pages/Topology'));
+const Troubleshoot = lazy(() => import('./pages/Troubleshoot'));
+const Isolir = lazy(() => import('./pages/Isolir'));
 
 function Guard({ perm, children }: { perm?: string; children: ReactNode }) {
   const { can } = useAuth();
@@ -63,6 +70,16 @@ export function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/cek" element={<PublicCheck />} />
+        <Route path="/isi" element={<Isolir />} />
+        <Route path="/isolir" element={<Isolir />} />
+        <Route
+          path="/print-pppoe"
+          element={
+            <Protected>
+              <PppVoucherPrint />
+            </Protected>
+          }
+        />
         <Route
           path="/print"
           element={
@@ -90,6 +107,11 @@ export function App() {
           <Route path="vouchers" element={<Guard perm="voucher.view"><Vouchers /></Guard>} />
           <Route path="vouchers/batches" element={<Guard perm="voucher.view"><Batches /></Guard>} />
           <Route path="vouchers/template" element={<Guard perm="hotspot.write"><LoginTemplate /></Guard>} />
+          <Route path="customers" element={<Guard perm="customer.view"><Customers /></Guard>} />
+          <Route path="pppoe/vouchers" element={<Guard perm="voucher.view"><PppVouchers /></Guard>} />
+          <Route path="pppoe/packages" element={<Guard perm="customer.view"><PppPackages /></Guard>} />
+          <Route path="troubleshoot" element={<Guard perm="customer.view"><Troubleshoot /></Guard>} />
+          <Route path="topology" element={<Guard perm="customer.view"><Topology /></Guard>} />
           <Route path="resellers" element={<Guard perm="reseller.view"><Resellers /></Guard>} />
           <Route path="my-balance" element={<MyBalance />} />
           <Route path="reports" element={<Guard perm="report.view"><Reports /></Guard>} />

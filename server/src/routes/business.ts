@@ -79,8 +79,25 @@ export function salesReport(ctx: AppContext, opts: { from: string; to: string; r
     [start, end, ...resP],
   )!.s;
 
-  const days: Record<string, { date: string; direct: number; reseller: number; count: number }> = {};
-  for (let d = opts.from; d <= opts.to; d = addDays(d, 1)) days[d] = { date: d, direct: 0, reseller: 0, count: 0 };
+  // PPPoE langsung: dihitung saat voucher diisikan ke pelanggan atau perpanjangan manual dicatat
+  const pppoe = opts.resellerId
+    ? []
+    : ctx.db.all<any>(
+        `SELECT t.created_at, t.amount, t.package_name, t.type, r.name AS router_name FROM customer_tx t LEFT JOIN routers r ON r.id = t.router_id
+         WHERE t.type IN ('voucher','manual') AND t.reseller_id IS NULL AND t.amount > 0 AND t.created_at >= ? AND t.created_at < ?${opts.routerId ? ' AND t.router_id = ?' : ''}`,
+        [start, end, ...rp],
+      );
+  // Voucher PPPoE yang dibeli reseller: dihitung saat saldo terpotong
+  const pppResellerSales = ctx.db.all<any>(
+    `SELECT b.created_at, b.cost, b.qty, 'PPPoE ' || b.package_name AS profile, b.router_id, r.name AS router_name, rs.name AS reseller_name, b.reseller_id
+     FROM ppp_voucher_batches b LEFT JOIN routers r ON r.id = b.router_id LEFT JOIN resellers rs ON rs.id = b.reseller_id
+     WHERE b.reseller_id IS NOT NULL AND b.created_at >= ? AND b.created_at < ?${bf}${brf}`,
+    [start, end, ...rp, ...resP],
+  );
+  resellerSales.push(...pppResellerSales);
+
+  const days: Record<string, { date: string; direct: number; reseller: number; pppoe: number; count: number }> = {};
+  for (let d = opts.from; d <= opts.to; d = addDays(d, 1)) days[d] = { date: d, direct: 0, reseller: 0, pppoe: 0, count: 0 };
   const byProfile: Record<string, { profile: string; count: number; amount: number }> = {};
   const byRouter: Record<string, { router: string; count: number; amount: number }> = {};
   const byReseller: Record<string, { reseller: string; count: number; amount: number }> = {};
@@ -96,6 +113,19 @@ export function salesReport(ctx: AppContext, opts: { from: string; to: string; r
     const rk = v.router_name ?? '-';
     (byRouter[rk] ??= { router: rk, count: 0, amount: 0 }).count++;
     byRouter[rk].amount += v.price;
+  }
+  for (const t of pppoe) {
+    const d = days[localDay(t.created_at, off)];
+    if (d) {
+      d.pppoe += t.amount;
+      d.count++;
+    }
+    const pk = `PPPoE ${t.package_name || 'tanpa paket'}`;
+    (byProfile[pk] ??= { profile: pk, count: 0, amount: 0 }).count++;
+    byProfile[pk].amount += t.amount;
+    const rk = t.router_name ?? '-';
+    (byRouter[rk] ??= { router: rk, count: 0, amount: 0 }).count++;
+    byRouter[rk].amount += t.amount;
   }
   for (const b of resellerSales) {
     const d = days[localDay(b.created_at, off)];
@@ -118,12 +148,18 @@ export function salesReport(ctx: AppContext, opts: { from: string; to: string; r
     [...rp, ...resP],
   );
 
+  const pppStock = ctx.db.all<any>(
+    `SELECT 'PPPoE ' || v.package_name AS profile, COUNT(*) AS count, SUM(v.price) AS value FROM ppp_vouchers v WHERE v.status = 'unused'${rf}${resF} GROUP BY v.package_name ORDER BY count DESC`,
+    [...rp, ...resP],
+  );
+  stock.push(...pppStock);
+  const pppoeTotal = pppoe.reduce((s, t) => s + t.amount, 0);
   const directTotal = direct.reduce((s, v) => s + v.price, 0);
   const resellerTotal = resellerSales.reduce((s, b) => s + b.cost, 0);
   return {
     from: opts.from,
     to: opts.to,
-    totals: { direct: directTotal, reseller: resellerTotal, total: directTotal + resellerTotal, activations, topups, directCount: direct.length, resellerCount: resellerSales.reduce((s, b) => s + b.qty, 0) },
+    totals: { direct: directTotal, reseller: resellerTotal, pppoe: pppoeTotal, pppoeCount: pppoe.length, total: directTotal + resellerTotal + pppoeTotal, activations, topups, directCount: direct.length, resellerCount: resellerSales.reduce((s, b) => s + b.qty, 0) },
     daily: Object.values(days),
     byProfile: Object.values(byProfile).sort((a, b) => b.amount - a.amount),
     byRouter: Object.values(byRouter).sort((a, b) => b.amount - a.amount),
@@ -235,11 +271,12 @@ export async function businessRoutes(app: FastifyInstance, ctx: AppContext) {
   app.get('/api/reports/sales.csv', { preHandler: auth('report.view') }, async (req, reply) => {
     const r = salesReport(ctx, rangeQuery(req.query));
     const csv = toCsv(
-      r.daily.map((d) => ({ ...d, total: d.direct + d.reseller })),
+      r.daily.map((d) => ({ ...d, total: d.direct + d.reseller + d.pppoe })),
       [
         ['date', 'Tanggal'],
-        ['count', 'Voucher'],
-        ['direct', 'Penjualan Langsung'],
+        ['count', 'Transaksi'],
+        ['direct', 'Hotspot Langsung'],
+        ['pppoe', 'PPPoE Langsung'],
         ['reseller', 'Penjualan Reseller'],
         ['total', 'Total'],
       ],

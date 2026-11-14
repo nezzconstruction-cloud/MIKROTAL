@@ -15,6 +15,7 @@ import { hashPassword, SecretBox } from './lib/security.js';
 import { AlertService, AuditService, Hub } from './services/alerts.js';
 import { BackupService } from './services/backup.js';
 import { MonitorService } from './services/monitor.js';
+import { PppoeService } from './services/pppoe.js';
 import { RouterManager } from './services/routers.js';
 import { SettingsService } from './services/settings.js';
 import { HttpError, VoucherService } from './services/vouchers.js';
@@ -22,6 +23,7 @@ import { authRoutes } from './routes/auth.js';
 import { routerRoutes } from './routes/routers.js';
 import { hotspotRoutes } from './routes/hotspot.js';
 import { voucherRoutes } from './routes/vouchers.js';
+import { pppoeRoutes } from './routes/pppoe.js';
 import { businessRoutes } from './routes/business.js';
 import { adminRoutes } from './routes/admin.js';
 import { publicRoutes } from './routes/public.js';
@@ -48,8 +50,9 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
   const audit = new AuditService(db);
   const monitor = new MonitorService(db, routers, settings, alerts, hub, app.log);
   const vouchers = new VoucherService(db, routers, settings, hub, app.log);
+  const pppoe = new PppoeService(db, routers, settings, hub, alerts, app.log);
   const backup = new BackupService(db, routers, settings, alerts);
-  const ctx: AppContext = { config, db, box, hub, settings, routers, monitor, vouchers, alerts, audit, backup };
+  const ctx: AppContext = { config, db, box, hub, settings, routers, monitor, vouchers, pppoe, alerts, audit, backup };
 
   seed(ctx);
 
@@ -76,12 +79,25 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
     return reply.status(500).send({ error: 'Terjadi kesalahan pada server' });
   });
 
+  // Pelanggan terisolir yang dialihkan router (dst-nat port 80) selalu mendarat di halaman isi voucher
+  app.addHook('onRequest', async (req, reply) => {
+    if (req.method !== 'GET') return;
+    const p = settings.get().pppoe;
+    if (!p.portalAddress || !ipInRanges(req.ip, p.isolirPoolRange)) return;
+    const url = req.url.split('?')[0];
+    const host = (req.headers.host ?? '').split(':')[0];
+    const own = host === p.portalAddress;
+    if (own && (/^\/(api|assets|isolir|isi)(\/|$)/.test(url) || /\.[a-z0-9]{2,5}$/i.test(url))) return;
+    return reply.redirect(`http://${p.portalAddress}${p.portalPort === 80 ? '' : `:${p.portalPort}`}/isolir`, 302);
+  });
+
   await app.register(async (api) => {
     await publicRoutes(api, ctx);
     await authRoutes(api, ctx);
     await routerRoutes(api, ctx);
     await hotspotRoutes(api, ctx);
     await voucherRoutes(api, ctx);
+    await pppoeRoutes(api, ctx);
     await businessRoutes(api, ctx);
     await adminRoutes(api, ctx);
   });
@@ -102,6 +118,7 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
   app.addHook('onClose', async () => {
     monitor.stop();
     vouchers.stop();
+    pppoe.stop();
     backup.stop();
     routers.disconnectAll();
     db.close();
@@ -110,9 +127,27 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
   return { app, ctx };
 }
 
+function ipToInt(ip: string) {
+  const m = ip.replace(/^::ffff:/, '').match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  return m ? ((Number(m[1]) << 24) | (Number(m[2]) << 16) | (Number(m[3]) << 8) | Number(m[4])) >>> 0 : undefined;
+}
+
+/** Cek apakah IP berada dalam rentang gaya RouterOS: "10.99.0.2-10.99.3.254,10.98.0.5". */
+export function ipInRanges(ip: string, ranges: string) {
+  const n = ipToInt(ip);
+  if (n === undefined) return false;
+  return ranges.split(',').some((r) => {
+    const [a, b] = r.trim().split('-');
+    const lo = ipToInt(a ?? '');
+    const hi = ipToInt(b ?? a ?? '');
+    return lo !== undefined && hi !== undefined && n >= lo && n <= hi;
+  });
+}
+
 export function startJobs(ctx: AppContext) {
   ctx.monitor.start();
   ctx.vouchers.start();
+  ctx.pppoe.start();
   ctx.backup.start();
 }
 
@@ -146,5 +181,35 @@ function seed(ctx: AppContext) {
       db.run('INSERT INTO profile_meta (router_id, profile, price, reseller_price, validity, time_limit) VALUES (?, ?, ?, ?, ?, ?)', [lastId, profile, price, rprice, validity, timeLimit]);
     }
     db.run('INSERT INTO resellers (name, phone, balance, discount, created_at) VALUES (?, ?, ?, ?, ?)', ['Konter Pulsa Jaya', '081234567890', 250000, 15, now]);
+    seedPppoeDemo(ctx, lastId, now);
+  }
+}
+
+/** Data contoh RT/RW Net: paket, ODC/ODP, dan pelanggan yang cocok dengan akun PPPoE di simulator. */
+function seedPppoeDemo(ctx: AppContext, routerId: number, now: string) {
+  const { db } = ctx;
+  const pkg = (name: string, profile: string, price: number, rprice: number) =>
+    db.run('INSERT INTO ppp_packages (router_id, name, profile, price, reseller_price, validity, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', [routerId, name, profile, price, rprice, '30d', now]).lastId;
+  const p10 = pkg('Rumahan 10 Mbps', 'PPPoE-10M', 150000, 135000);
+  const p20 = pkg('Keluarga 20 Mbps', 'PPPoE-20M', 250000, 225000);
+  // koordinat contoh agar peta jalur dan troubleshoot langsung bisa dicoba
+  db.run('UPDATE routers SET lat = ?, lng = ? WHERE id = ?', [-7.7956, 110.3695, routerId]);
+  const odc = db.run('INSERT INTO odcs (router_id, name, location, ports, lat, lng, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', [routerId, 'ODC-01', 'Depan Pos Ronda RW 05', 8, -7.7972, 110.3712, now]).lastId;
+  const odp = (name: string, port: number, location: string, lat: number, lng: number) =>
+    db.run('INSERT INTO odps (router_id, odc_id, odc_port, name, location, ports, lat, lng, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [routerId, odc, port, name, location, 8, lat, lng, now]).lastId;
+  const odpA = odp('ODP-01A', 1, 'Tiang Gang Mawar', -7.7981, 110.3706);
+  const odpB = odp('ODP-01B', 2, 'Tiang Gang Melati', -7.7978, 110.3727);
+  const day = 86400_000;
+  const customers: [string, string, string, string, string, number, number, number, number, 'active' | 'disabled', number, number][] = [
+    ['Pak Joko', '081200000001', 'Gang Mawar No. 3', 'pelanggan01', 'rahasia01', p10, odpA, 1, 21, 'active', -7.7984, 110.371],
+    ['Bu Ani', '081200000002', 'Gang Mawar No. 7', 'pelanggan02', 'rahasia02', p20, odpA, 2, 2, 'active', -7.7979, 110.3702],
+    ['Warung Kopi', '081200000003', 'Gang Melati No. 1', 'pelanggan03', 'rahasia03', p10, odpB, 1, 12, 'disabled', -7.7975, 110.3731],
+  ];
+  for (const [name, phone, address, username, password, packageId, odpId, port, days, status, lat, lng] of customers) {
+    db.run(
+      `INSERT INTO customers (router_id, name, phone, address, username, password, package_id, profile, odp_id, odp_port, lat, lng, status, expires_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [routerId, name, phone, address, username, password, packageId, packageId === p10 ? 'PPPoE-10M' : 'PPPoE-20M', odpId, port, lat, lng, status, new Date(Date.now() + days * day).toISOString(), now],
+    );
   }
 }

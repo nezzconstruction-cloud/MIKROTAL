@@ -52,7 +52,9 @@ export function Sparkline({ data, dataKey, color = '#22d3ee', height = 40 }: { d
   );
 }
 
-export function RevenueChart({ data, height = 260, currency = 'IDR' }: { data: { date: string; direct: number; reseller: number }[]; height?: number; currency?: string }) {
+const SERIES: Record<string, string> = { pppoe: 'PPPoE langsung', direct: 'Hotspot langsung', reseller: 'Reseller' };
+
+export function RevenueChart({ data, height = 260, currency = 'IDR' }: { data: { date: string; direct: number; reseller: number; pppoe?: number }[]; height?: number; currency?: string }) {
   const fmtDate = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' });
   return (
     <ResponsiveContainer width="100%" height={height}>
@@ -62,6 +64,10 @@ export function RevenueChart({ data, height = 260, currency = 'IDR' }: { data: {
             <stop offset="0%" stopColor="#22d3ee" />
             <stop offset="100%" stopColor="#0891b2" />
           </linearGradient>
+          <linearGradient id="bar-pppoe" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#34d399" />
+            <stop offset="100%" stopColor="#059669" />
+          </linearGradient>
           <linearGradient id="bar-reseller" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#a78bfa" />
             <stop offset="100%" stopColor="#6366f1" />
@@ -70,8 +76,9 @@ export function RevenueChart({ data, height = 260, currency = 'IDR' }: { data: {
         <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" vertical={false} />
         <XAxis dataKey="date" tickFormatter={fmtDate} {...axis} minTickGap={16} />
         <YAxis tickFormatter={(v) => (v >= 1e6 ? `${(v / 1e6).toFixed(1)}jt` : v >= 1e3 ? `${Math.round(v / 1e3)}rb` : String(v))} {...axis} width={48} />
-        <Tooltip {...tooltipStyle} cursor={{ fill: 'var(--surface-2)' }} labelFormatter={(v) => fmtDate(String(v))} formatter={(v, n) => [formatMoney(Number(v), currency), n === 'direct' ? 'Langsung' : 'Reseller']} />
-        <Legend formatter={(v) => (v === 'direct' ? 'Penjualan langsung' : 'Penjualan reseller')} wrapperStyle={{ fontSize: 12 }} />
+        <Tooltip {...tooltipStyle} cursor={{ fill: 'var(--surface-2)' }} labelFormatter={(v) => fmtDate(String(v))} formatter={(v, n) => [formatMoney(Number(v), currency), SERIES[String(n)] ?? String(n)]} />
+        <Legend formatter={(v) => SERIES[String(v)] ?? v} wrapperStyle={{ fontSize: 12 }} />
+        <Bar dataKey="pppoe" stackId="a" fill="url(#bar-pppoe)" radius={[0, 0, 0, 0]} maxBarSize={36} />
         <Bar dataKey="direct" stackId="a" fill="url(#bar-direct)" radius={[0, 0, 0, 0]} maxBarSize={36} />
         <Bar dataKey="reseller" stackId="a" fill="url(#bar-reseller)" radius={[6, 6, 0, 0]} maxBarSize={36} />
       </BarChart>

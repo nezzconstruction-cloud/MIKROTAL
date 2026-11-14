@@ -200,3 +200,21 @@ select.input {
     background: #fff !important;
   }
 }
+
+/* Peta jalur fiber (Leaflet) */
+.fiber-label.leaflet-tooltip {
+  background: rgb(15 23 42 / 0.85);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  box-shadow: none;
+}
+.fiber-label.leaflet-tooltip::before {
+  display: none;
+}
+.leaflet-container {
+  font-family: inherit;
+}

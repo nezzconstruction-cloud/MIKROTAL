@@ -1,8 +1,68 @@
 # MIKROTAL — Mikrotik Digital
 
-Dashboard web untuk **monitoring, konfigurasi MikroTik, manajemen hotspot, dan penjualan voucher**. Satu aplikasi untuk banyak router, realtime, dan bisa dipakai dari HP. Winbox atau Mikhmon tidak diperlukan untuk pekerjaan sehari-hari.
+**MIKROTAL** adalah aplikasi web untuk mengelola jaringan MikroTik dari satu tempat: monitoring router, konfigurasi tanpa Winbox, hotspot dan voucher, serta pengelolaan **RT/RW Net berbasis PPPoE** lewat ODC dan ODP. Aplikasi dipasang di server sendiri, dibuka dari browser komputer atau HP, dan berbahasa Indonesia.
 
 ![Dashboard](docs/screenshots/dashboard.png)
+
+## Untuk siapa aplikasi ini
+
+- **Pengelola RT/RW Net** yang membagikan internet lewat fiber (OLT → ODC → ODP → rumah) dengan akun PPPoE dan sistem voucher.
+- **Pemilik hotspot voucher** (warung, kos, kafe) yang ingin generate, cetak, dan memantau voucher tanpa Mikhmon.
+- **Teknisi jaringan** yang butuh memantau banyak router dan mengubah konfigurasi dari HP.
+
+## Ringkasan kemampuan
+
+| Kebutuhan | Yang dikerjakan MIKROTAL |
+|---|---|
+| Tahu kondisi jaringan | Status router, CPU, RAM, trafik live, pelanggan online/offline, notifikasi ke Telegram |
+| Mengelola pelanggan rumah | Data pelanggan terhubung ke akun PPPoE, paket, masa aktif, dan port ODP |
+| Menagih tanpa repot | Voucher isi ulang masa aktif, isolir otomatis saat habis, halaman isi ulang untuk pelanggan |
+| Mencari kabel putus | Peta jalur server → ODC → ODP → rumah dan scan yang menunjuk segmen yang diduga putus |
+| Menjual voucher hotspot | Generate massal, cetak dengan QR, reseller bersaldo, laporan penjualan |
+| Mengatur router | 40+ menu RouterOS (firewall, queue, DHCP, PPP, dll) tanpa Winbox |
+
+| Pelanggan PPPoE | Topologi ODC / ODP |
+|---|---|
+| ![Pelanggan](docs/screenshots/pelanggan.png) | ![Topologi](docs/screenshots/topologi.png) |
+
+| Troubleshoot jalur kabel | Halaman isi ulang pelanggan |
+|---|---|
+| ![Troubleshoot](docs/screenshots/troubleshoot.png) | <img src="docs/screenshots/isi-ulang.png" alt="Isi ulang" width="260"> |
+
+## Cara install
+
+Butuh **Node.js 22.13 atau lebih baru** dan **Git**. Berjalan di Windows, Linux, dan macOS.
+
+```bash
+git clone https://github.com/nezzconstruction-cloud/MIKROTAL.git
+cd MIKROTAL
+cp .env.example .env        # Windows: copy .env.example .env
+```
+
+Buka file `.env`, ganti `APP_SECRET` dan `ADMIN_PASSWORD`, lalu:
+
+```bash
+npm install
+npm run build
+npm start
+```
+
+Buka `http://localhost:8080` (atau `http://IP-SERVER:8080` dari perangkat lain) dan login dengan `admin` serta password dari `.env` (bawaan `admin123`).
+
+Saat pertama jalan, otomatis dibuat:
+- akun **admin** (segera ganti password di menu *Akun saya*);
+- **Demo Router (Simulasi)** beserta contoh paket, ODC/ODP, pelanggan, profil hotspot, dan satu reseller, supaya semua fitur bisa langsung dicoba tanpa MikroTik. Hapus setelah menambahkan router asli, atau set `SEED_DEMO=false`.
+
+Pilihan lain dengan Docker:
+
+```bash
+cp .env.example .env        # ganti APP_SECRET dan ADMIN_PASSWORD
+docker compose up -d --build
+```
+
+Panduan lengkap (update dari versi sebelumnya, cadangan data, menjalankan otomatis saat server menyala, dan masalah yang sering muncul) ada di **[INSTALL.md](INSTALL.md)**.
+
+Setelah terpasang, lanjutkan ke [Menghubungkan MikroTik asli](#menghubungkan-mikrotik-asli) dan [Alur PPPoE (RT/RW Net)](#alur-pppoe-rtrw-net).
 
 ## Fitur utama
 
@@ -36,6 +96,16 @@ Dashboard web untuk **monitoring, konfigurasi MikroTik, manajemen hotspot, dan p
 - **Laporan penjualan**: harian, per profil, per reseller, per router, stok voucher, dan ekspor CSV.
 - Halaman publik **/cek** untuk pelanggan memeriksa status dan sisa masa aktif voucher.
 
+### RT/RW Net: pelanggan PPPoE lewat ODC / ODP
+- **Pelanggan**: data pelanggan terhubung ke akun PPPoE (PPP secret) di router, paket, masa aktif, dan port ODP. Status online, IP, dan MAC router klien diperbarui otomatis.
+- **Voucher isi ulang**: voucher adalah kode untuk memperpanjang masa aktif akun pelanggan yang tetap. Pelanggan tidak perlu mengubah setelan router di rumahnya. Sisa masa aktif tidak hangus.
+- **Isolir otomatis**: saat masa aktif habis, akun dipindah ke profil isolir (bukan diputus). Begitu voucher diisikan, profil paket dikembalikan dan sesi disambung ulang.
+- **Halaman pelanggan tanpa login**: `/isi` untuk cek masa aktif dan isi voucher, `/isolir` sebagai tujuan pengalihan saat terisolir.
+- **Topologi ODC → ODP → pelanggan**: status tiap port (online, offline, terisolir, kosong) dan notifikasi bila semua pelanggan di satu ODP mati bersamaan.
+- **Lokasi & peta jalur**: titik koordinat server, ODC, ODP, dan rumah pelanggan (ketik, tempel tautan Google Maps, lokasi HP di lapangan, atau klik di peta OpenStreetMap).
+- **Troubleshoot jalur**: scan status PPPoE semua pelanggan untuk menunjuk segmen kabel yang diduga putus (feeder, distribusi, atau drop), lengkap dengan langkah pengecekan, pelanggan terdampak, log router, dan notifikasi otomatis.
+- **Paket & harga**, perpanjangan manual (tunai/transfer), impor akun PPPoE yang sudah ada, voucher untuk reseller, dan laporan penjualan PPPoE.
+
 ### Keamanan & administrasi
 - Multi-pengguna dengan 4 peran: **Super Admin, Admin, Operator, Reseller**.
 - Password router disimpan terenkripsi **AES-256-GCM**, dan password pengguna di-hash dengan **scrypt**.
@@ -59,34 +129,6 @@ Dashboard web untuk **monitoring, konfigurasi MikroTik, manajemen hotspot, dan p
 - **server/**: Node.js 22 + TypeScript + Fastify. Klien RouterOS API ditulis sendiri tanpa library (mendukung TLS, login lama/baru, banyak perintah paralel). Database SQLite bawaan Node (`node:sqlite`), jadi tidak perlu compile modul native.
 - **web/**: React 19 + Vite + Tailwind CSS 4 + TanStack Query + Recharts.
 - **Mode simulasi**: router virtual yang meniru RouterOS (trafik bergerak, pengguna hotspot login/logout, voucher terpakai). Berguna untuk demo, pelatihan, dan pengujian tanpa perangkat asli.
-
-## Mulai cepat
-
-### Opsi A — Docker (disarankan untuk server/VPS)
-
-```bash
-git clone https://github.com/nezzconstruction-cloud/MIKROTAL.git
-cd MIKROTAL
-cp .env.example .env        # ganti APP_SECRET dan ADMIN_PASSWORD
-docker compose up -d --build
-```
-
-Buka `http://IP-SERVER:8080`, lalu login dengan `admin` / `admin123` (atau sesuai `.env`).
-
-### Opsi B — Node.js langsung (Windows/Linux/macOS)
-
-Butuh **Node.js 22.13 atau lebih baru**.
-
-```bash
-npm install
-cp .env.example .env        # Windows: copy .env.example .env
-npm run build
-npm start
-```
-
-Saat pertama jalan, otomatis dibuat:
-- akun **admin / admin123** (segera ganti di menu *Akun saya*);
-- **Demo Router (Simulasi)** beserta contoh profil harga dan satu reseller, supaya semua fitur bisa langsung dicoba. Hapus setelah menambahkan router asli, atau set `SEED_DEMO=false`.
 
 ## Menghubungkan MikroTik asli
 
@@ -133,13 +175,48 @@ Pengaturan lain (nama usaha, ambang alert, Telegram, interval sinkronisasi vouch
 
 Penjualan reseller dihitung saat reseller membeli voucher (saldo terpotong), sedangkan penjualan langsung dihitung saat voucher dipakai.
 
+## Alur PPPoE (RT/RW Net)
+
+1. **Paket & Harga**: buat paket yang menunjuk ke PPP profile di router (kecepatan diatur di profil), isi harga dan masa aktif per voucher.
+2. **Topologi ODC / ODP**: catat ODC, ODP, dan jumlah portnya.
+3. **Pelanggan**: tambah pelanggan baru (akun PPPoE dibuat di router) atau **Impor dari router** untuk akun yang sudah ada, lalu tempatkan di port ODP.
+4. **Voucher Isi Ulang**: buat dan cetak voucher. Pelanggan mengisinya sendiri di `/isi`, atau operator lewat tombol **Isi voucher** di daftar pelanggan.
+5. Saat masa aktif habis, pelanggan diisolir otomatis pada sinkronisasi berikutnya (default tiap 60 detik).
+
+### Troubleshoot jalur kabel
+
+Menu **Troubleshoot Jalur** membandingkan pelanggan mana yang offline bersamaan, lalu menunjuk segmen yang mereka pakai bersama:
+
+| Pola offline | Segmen yang diduga |
+|---|---|
+| Semua pelanggan di semua ODC | Sisi server: port router, OLT, atau kabel utama |
+| Semua ODP di bawah satu ODC, ODC lain normal | Kabel **feeder** server → ODC |
+| Semua pelanggan satu ODP, ODP lain di ODC yang sama normal | Kabel **distribusi** ODC → ODP |
+| Satu pelanggan, tetangganya di ODP yang sama normal | Kabel **drop** ODP → rumah, atau perangkat pelanggan |
+
+Syarat agar hasilnya berguna: setiap pelanggan ditempatkan di ODP dan port yang benar, dan koordinat server/ODC/ODP diisi agar segmen tampil di peta. Tombol **Scan jalur sekarang** mengambil status terbaru dari router, memeriksa interface PPPoE server, dan melampirkan baris log router terakhir tiap pelanggan terdampak. Sinkronisasi berkala juga mengirim notifikasi (aplikasi dan Telegram) saat pola feeder/distribusi putus muncul dan saat pulih.
+
+Batasan: aplikasi tidak mengukur kabel secara fisik. Hasilnya menunjuk **segmen**, bukan meter ke berapa kabel putus; titik pastinya tetap perlu OTDR atau power meter. Pemadaman listrik satu gang bisa terlihat sama seperti kabel distribusi putus. Garis di peta ditarik lurus antar titik, bukan rute kabel sebenarnya. Peta memuat ubin dari OpenStreetMap, jadi browser pengguna perlu akses internet.
+
+### Menyiapkan isolir di router
+
+Di **Pengaturan → PPPoE & isolir**, isi **IP server MIKROTAL** (alamat yang bisa dijangkau pelanggan), simpan, lalu klik **Pasang aturan isolir di router aktif**. Aplikasi menambahkan:
+
+- IP pool dan PPP profile isolir (`address-list=isolir`, kecepatan 512k),
+- filter `forward` di urutan teratas: izinkan DNS dan IP server MIKROTAL, blokir sisanya untuk `src-address-list=isolir`,
+- NAT `dstnat` yang mengalihkan HTTP (port 80) pelanggan terisolir ke MIKROTAL.
+
+Semua aturan diberi komentar `MIKROTAL-ISOLIR` dan tidak digandakan bila tombol ditekan lagi. Permintaan dari IP pool isolir otomatis diarahkan MIKROTAL ke halaman `/isolir` (form isi voucher), sehingga MIKROTAL harus melihat IP asli pelanggan: jangan lewatkan trafik isolir melalui masquerade, dan bila memakai reverse proxy pastikan header `X-Forwarded-For` diteruskan. Situs HTTPS tidak bisa dialihkan; pelanggan perlu membuka situs HTTP apa pun atau alamat `/isi` secara langsung.
+
+> Aplikasi menjadi acuan status akun: bila profil atau status disabled sebuah akun pelanggan diubah langsung di Winbox, sinkronisasi berikutnya mengembalikannya sesuai data di MIKROTAL.
+
 ## Peran pengguna
 
 | Peran | Hak akses |
 |---|---|
 | Super Admin | Semua, termasuk pengguna aplikasi, pengaturan, dan perintah terminal berbahaya |
 | Admin | Router, konfigurasi, hotspot, voucher, reseller, laporan, terminal, reboot |
-| Operator | Monitoring, hotspot (putus sesi, IP binding, dll), buat & cetak voucher, laporan. Tidak bisa mengubah konfigurasi jaringan |
+| Operator | Monitoring, hotspot (putus sesi, IP binding, dll), pelanggan PPPoE & topologi ODC/ODP, buat & cetak voucher, laporan. Tidak bisa mengubah konfigurasi jaringan |
 | Reseller | Membuat & mencetak voucher dari saldo sendiri, melihat voucher & transaksinya |
 
 ## Pengembangan

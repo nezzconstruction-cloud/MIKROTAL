@@ -7,6 +7,7 @@ import {
   BarChart3,
   Bell,
   BookUser,
+  Cable,
   ChevronDown,
   ChevronRight,
   ClipboardList,
@@ -53,6 +54,19 @@ const r = (key: string, label: string): NavItem => ({ to: `/res/${key}`, label }
 
 const NAV: NavGroup[] = [
   {
+    id: 'pelanggan',
+    label: 'Pelanggan PPPoE',
+    icon: <Cable className="size-4" />,
+    perm: 'voucher.view',
+    items: [
+      { to: '/customers', label: 'Pelanggan', perm: 'customer.view' },
+      { to: '/pppoe/vouchers', label: 'Voucher Isi Ulang' },
+      { to: '/pppoe/packages', label: 'Paket & Harga', perm: 'customer.view' },
+      { to: '/topology', label: 'Topologi ODC / ODP', perm: 'customer.view' },
+      { to: '/troubleshoot', label: 'Troubleshoot Jalur', perm: 'customer.view' },
+    ],
+  },
+  {
     id: 'monitor',
     label: 'Monitoring',
     icon: <Activity className="size-4" />,
@@ -83,7 +97,7 @@ const NAV: NavGroup[] = [
   },
   {
     id: 'voucher',
-    label: 'Voucher',
+    label: 'Voucher Hotspot',
     icon: <Ticket className="size-4" />,
     perm: 'voucher.view',
     items: [
@@ -95,7 +109,7 @@ const NAV: NavGroup[] = [
   },
   {
     id: 'ppp',
-    label: 'PPP / PPPoE',
+    label: 'PPP (menu router)',
     icon: <Users className="size-4" />,
     perm: 'config.view',
     items: [r('ppp-secrets', 'PPP Secret'), r('ppp-profiles', 'PPP Profile'), r('ppp-active', 'PPP Aktif'), r('pppoe-servers', 'PPPoE Server')],

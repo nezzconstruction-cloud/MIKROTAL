@@ -63,12 +63,13 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
         tx: routers.reduce((sum, r) => sum + (r.snapshot?.tx ?? 0), 0),
       },
       revenue: {
-        today: (todayRow?.direct ?? 0) + (todayRow?.reseller ?? 0),
+        today: (todayRow?.direct ?? 0) + (todayRow?.reseller ?? 0) + (todayRow?.pppoe ?? 0),
         week: week.totals.total,
         month: month.totals.total,
         daily: week.daily,
       },
       vouchers: { ...counts, activatedToday },
+      pppoe: isReseller ? null : ctx.pppoe.summary(),
       topProfiles,
       alerts: isReseller ? [] : ctx.alerts.list({ limit: 8 }),
       unreadAlerts: isReseller ? 0 : ctx.alerts.unreadCount(),
@@ -144,6 +145,23 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
         defaultLength: z.number().int().min(3).max(16),
         defaultPrefix: z.string().max(10),
         loginUrl: z.string().max(200),
+      })
+      .partial()
+      .optional(),
+    pppoe: z
+      .object({
+        isolirProfile: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9._-]+$/, 'Nama profil hanya huruf, angka, titik, strip'),
+        isolirPool: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9._-]+$/),
+        isolirPoolRange: z.string().trim().max(80).regex(/^[0-9.,\-\/ ]+$/, 'Rentang IP tidak valid'),
+        isolirGateway: z.string().trim().max(40).regex(/^[0-9.]+$/, 'Alamat IP tidak valid'),
+        portalAddress: z.string().trim().max(40).regex(/^[0-9.]*$/, 'Alamat IP tidak valid'),
+        portalPort: z.number().int().min(1).max(65535),
+        remindDays: z.number().int().min(0).max(30),
+        voucherLength: z.number().int().min(6).max(16),
+        voucherCharset: z.enum(['numeric', 'alnum-upper']),
+        voucherPrefix: z.string().trim().max(6).regex(/^[A-Za-z0-9]*$/),
+        topupUrl: z.string().trim().max(200),
+        odpDownAlert: z.boolean(),
       })
       .partial()
       .optional(),

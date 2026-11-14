@@ -19,6 +19,8 @@ interface SimState {
   tables: Record<string, Item[]>;
   singletons: Record<string, Item>;
   logs: Item[];
+  /** Akun PPPoE yang "kabelnya putus": tidak bisa menyambung sampai dipulihkan. */
+  pppBlocked?: string[];
   ifaceRate: Record<string, { rx: number; tx: number; base: number }>;
   counters: Record<string, { rx: number; tx: number }>;
   cpu: number;
@@ -415,6 +417,8 @@ export class SimulatedRouter extends EventEmitter implements RouterConnection {
       else if (SimulatedRouter.autoActivity && Math.random() < dt / 900) this.logout(a, 'keepalive timeout');
     }
 
+    this.tickPpp(dt);
+
     // Login baru: utamakan voucher yang belum dipakai
     const maxActive = 25;
     if (SimulatedRouter.autoActivity && active.length < maxActive) {
@@ -433,6 +437,64 @@ export class SimulatedRouter extends EventEmitter implements RouterConnection {
         this.login(user);
       }
     }
+  }
+
+  /** Sesi PPPoE: router klien selalu mencoba menyambung selama akunnya tidak dinonaktifkan. */
+  private tickPpp(dt: number) {
+    const secrets = this.table('/ppp/secret');
+    const active = this.table('/ppp/active');
+    const blocked = new Set(this.s.pppBlocked ?? []);
+    for (const a of [...active]) {
+      const s = secrets.find((x) => x.name === a.name);
+      if (blocked.has(a.name)) {
+        active.splice(active.indexOf(a), 1);
+        this.log('pppoe,ppp,info', `<pppoe-${a.name}>: terminating... - peer is not responding`);
+        this.log('pppoe,ppp,info,account', `${a.name} logged out, ${parseDuration(a.uptime)} 0 0 0 0`);
+      } else if (!s || s.disabled === 'true') active.splice(active.indexOf(a), 1);
+      else a.uptime = formatDuration(parseDuration(a.uptime) + dt);
+    }
+    if (!SimulatedRouter.autoActivity) return;
+    for (const s of secrets) {
+      if (s.disabled === 'true' || blocked.has(s.name) || active.some((a) => a.name === s.name)) continue;
+      // akun contoh "offline" dibiarkan mati untuk demo; lainnya menyambung ulang dalam beberapa detik
+      if (/offline/i.test(s.comment ?? '') || Math.random() > dt / 6) continue;
+      this.pppConnect(s.name);
+    }
+  }
+
+  /** Simulasikan kabel putus (akun tidak bisa menyambung) atau pulih kembali. */
+  pppSetBlocked(names: string[], blocked: boolean) {
+    const set = new Set(this.s.pppBlocked ?? []);
+    for (const n of names) blocked ? set.add(n) : set.delete(n);
+    this.s.pppBlocked = [...set];
+    this.store.lastTick -= 1000; // paksa satu tick agar sesi langsung terputus
+    this.tick();
+    if (!blocked) for (const n of names) this.pppConnect(n);
+    this.store.dirty = true;
+  }
+
+  pppClearBlocked() {
+    const names = this.s.pppBlocked ?? [];
+    this.pppSetBlocked([...names], false);
+  }
+
+  /** Simulasikan router klien menyambung PPPoE (dipakai tes dan demo). */
+  pppConnect(name: string) {
+    const s = this.table('/ppp/secret').find((x) => x.name === name);
+    const active = this.table('/ppp/active');
+    if (!s || s.disabled === 'true' || (this.s.pppBlocked ?? []).includes(name) || active.some((a) => a.name === name)) return false;
+    const isolated = /isolir/i.test(s.profile ?? '');
+    active.push({
+      '.id': this.newId(),
+      name,
+      service: 'pppoe',
+      address: isolated ? `10.99.0.${randInt(2, 250)}` : `172.16.0.${randInt(10, 250)}`,
+      'caller-id': macAddr(),
+      uptime: '0s',
+      encoding: '',
+    });
+    this.log('pppoe,ppp,info,account', `${name} logged in, ${s.profile}`);
+    return true;
   }
 
   private login(user: Item) {
@@ -501,7 +563,7 @@ export class SimulatedRouter extends EventEmitter implements RouterConnection {
 
   private applyParams(item: Item, params: RosParams) {
     for (const [k, v] of Object.entries(params)) {
-      if (k === '.id' || k === 'numbers' || v === undefined) continue;
+      if (k === '.id' || k === 'numbers' || k === 'place-before' || v === undefined) continue;
       item[k] = normBool(formatValue(v));
     }
   }
@@ -663,6 +725,7 @@ export class SimulatedRouter extends EventEmitter implements RouterConnection {
         const item: Item = { '.id': this.newId(), disabled: 'false', comment: '' };
         if (base === '/ip/hotspot/user') Object.assign(item, { profile: 'default', server: 'all', uptime: '0s', 'bytes-in': '0', 'bytes-out': '0', 'limit-uptime': '', 'limit-bytes-total': '0' });
         if (base === '/interface/vlan') Object.assign(item, { type: 'vlan', running: 'true', mtu: '1500' });
+        if (base === '/ppp/secret') Object.assign(item, { service: 'any', profile: 'default' });
         this.applyParams(item, params);
         rows.push(item);
         if (base === '/interface/vlan') {
