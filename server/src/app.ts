@@ -192,22 +192,24 @@ function seedPppoeDemo(ctx: AppContext, routerId: number, now: string) {
     db.run('INSERT INTO ppp_packages (router_id, name, profile, price, reseller_price, validity, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', [routerId, name, profile, price, rprice, '30d', now]).lastId;
   const p10 = pkg('Rumahan 10 Mbps', 'PPPoE-10M', 150000, 135000);
   const p20 = pkg('Keluarga 20 Mbps', 'PPPoE-20M', 250000, 225000);
-  const odc = db.run('INSERT INTO odcs (router_id, name, location, ports, created_at) VALUES (?, ?, ?, ?, ?)', [routerId, 'ODC-01', 'Depan Pos Ronda RW 05', 8, now]).lastId;
-  const odp = (name: string, port: number, location: string) =>
-    db.run('INSERT INTO odps (router_id, odc_id, odc_port, name, location, ports, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', [routerId, odc, port, name, location, 8, now]).lastId;
-  const odpA = odp('ODP-01A', 1, 'Tiang Gang Mawar');
-  const odpB = odp('ODP-01B', 2, 'Tiang Gang Melati');
+  // koordinat contoh agar peta jalur dan troubleshoot langsung bisa dicoba
+  db.run('UPDATE routers SET lat = ?, lng = ? WHERE id = ?', [-7.7956, 110.3695, routerId]);
+  const odc = db.run('INSERT INTO odcs (router_id, name, location, ports, lat, lng, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', [routerId, 'ODC-01', 'Depan Pos Ronda RW 05', 8, -7.7972, 110.3712, now]).lastId;
+  const odp = (name: string, port: number, location: string, lat: number, lng: number) =>
+    db.run('INSERT INTO odps (router_id, odc_id, odc_port, name, location, ports, lat, lng, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [routerId, odc, port, name, location, 8, lat, lng, now]).lastId;
+  const odpA = odp('ODP-01A', 1, 'Tiang Gang Mawar', -7.7981, 110.3706);
+  const odpB = odp('ODP-01B', 2, 'Tiang Gang Melati', -7.7978, 110.3727);
   const day = 86400_000;
-  const customers: [string, string, string, string, string, number, number, number, number, 'active' | 'disabled'][] = [
-    ['Pak Joko', '081200000001', 'Gang Mawar No. 3', 'pelanggan01', 'rahasia01', p10, odpA, 1, 21, 'active'],
-    ['Bu Ani', '081200000002', 'Gang Mawar No. 7', 'pelanggan02', 'rahasia02', p20, odpA, 2, 2, 'active'],
-    ['Warung Kopi', '081200000003', 'Gang Melati No. 1', 'pelanggan03', 'rahasia03', p10, odpB, 1, 12, 'disabled'],
+  const customers: [string, string, string, string, string, number, number, number, number, 'active' | 'disabled', number, number][] = [
+    ['Pak Joko', '081200000001', 'Gang Mawar No. 3', 'pelanggan01', 'rahasia01', p10, odpA, 1, 21, 'active', -7.7984, 110.371],
+    ['Bu Ani', '081200000002', 'Gang Mawar No. 7', 'pelanggan02', 'rahasia02', p20, odpA, 2, 2, 'active', -7.7979, 110.3702],
+    ['Warung Kopi', '081200000003', 'Gang Melati No. 1', 'pelanggan03', 'rahasia03', p10, odpB, 1, 12, 'disabled', -7.7975, 110.3731],
   ];
-  for (const [name, phone, address, username, password, packageId, odpId, port, days, status] of customers) {
+  for (const [name, phone, address, username, password, packageId, odpId, port, days, status, lat, lng] of customers) {
     db.run(
-      `INSERT INTO customers (router_id, name, phone, address, username, password, package_id, profile, odp_id, odp_port, status, expires_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [routerId, name, phone, address, username, password, packageId, packageId === p10 ? 'PPPoE-10M' : 'PPPoE-20M', odpId, port, status, new Date(Date.now() + days * day).toISOString(), now],
+      `INSERT INTO customers (router_id, name, phone, address, username, password, package_id, profile, odp_id, odp_port, lat, lng, status, expires_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [routerId, name, phone, address, username, password, packageId, packageId === p10 ? 'PPPoE-10M' : 'PPPoE-20M', odpId, port, lat, lng, status, new Date(Date.now() + days * day).toISOString(), now],
     );
   }
 }
