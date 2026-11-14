@@ -79,6 +79,18 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
     return reply.status(500).send({ error: 'Terjadi kesalahan pada server' });
   });
 
+  // Pelanggan terisolir yang dialihkan router (dst-nat port 80) selalu mendarat di halaman isi voucher
+  app.addHook('onRequest', async (req, reply) => {
+    if (req.method !== 'GET') return;
+    const p = settings.get().pppoe;
+    if (!p.portalAddress || !ipInRanges(req.ip, p.isolirPoolRange)) return;
+    const url = req.url.split('?')[0];
+    const host = (req.headers.host ?? '').split(':')[0];
+    const own = host === p.portalAddress;
+    if (own && (/^\/(api|assets|isolir|isi)(\/|$)/.test(url) || /\.[a-z0-9]{2,5}$/i.test(url))) return;
+    return reply.redirect(`http://${p.portalAddress}${p.portalPort === 80 ? '' : `:${p.portalPort}`}/isolir`, 302);
+  });
+
   await app.register(async (api) => {
     await publicRoutes(api, ctx);
     await authRoutes(api, ctx);
@@ -113,6 +125,23 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
   });
 
   return { app, ctx };
+}
+
+function ipToInt(ip: string) {
+  const m = ip.replace(/^::ffff:/, '').match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  return m ? ((Number(m[1]) << 24) | (Number(m[2]) << 16) | (Number(m[3]) << 8) | Number(m[4])) >>> 0 : undefined;
+}
+
+/** Cek apakah IP berada dalam rentang gaya RouterOS: "10.99.0.2-10.99.3.254,10.98.0.5". */
+export function ipInRanges(ip: string, ranges: string) {
+  const n = ipToInt(ip);
+  if (n === undefined) return false;
+  return ranges.split(',').some((r) => {
+    const [a, b] = r.trim().split('-');
+    const lo = ipToInt(a ?? '');
+    const hi = ipToInt(b ?? a ?? '');
+    return lo !== undefined && hi !== undefined && n >= lo && n <= hi;
+  });
 }
 
 export function startJobs(ctx: AppContext) {

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Archive, Bell, Building2, Gauge, Save, Send, Settings as SettingsIcon, Ticket } from 'lucide-react';
+import { Archive, Bell, Building2, Cable, Gauge, Save, Send, Settings as SettingsIcon, ShieldAlert, Ticket } from 'lucide-react';
 import { get, post, put } from '../lib/api';
-import { Button, Card, CardHeader, Field, Input, Loading, PageHeader, Select, Toggle, useAction } from '../components/ui';
+import { useRouters } from '../lib/router-context';
+import { Button, Card, CardHeader, Field, Input, Loading, PageHeader, Select, Toggle, useAction, useFeedback } from '../components/ui';
 
 type S = any;
 
@@ -12,6 +13,9 @@ export default function SettingsPage() {
   const [s, setS] = useState<S | null>(null);
   const { run, busy } = useAction();
   const tg = useAction();
+  const iso = useAction();
+  const { router } = useRouters();
+  const { confirm, toast } = useFeedback();
   useEffect(() => {
     if (data) setS(structuredClone(data));
   }, [data]);
@@ -39,7 +43,7 @@ export default function SettingsPage() {
     <div className="space-y-5">
       <PageHeader
         title="Pengaturan"
-        subtitle="Identitas usaha, pemantauan, notifikasi, voucher, dan backup otomatis"
+        subtitle="Identitas usaha, pemantauan, notifikasi, voucher, PPPoE & isolir, dan backup otomatis"
         icon={<SettingsIcon className="size-5" />}
         actions={
           <Button icon={<Save className="size-4" />} loading={busy} onClick={save}>
@@ -124,7 +128,7 @@ export default function SettingsPage() {
         </Card>
 
         <Card>
-          <CardHeader title="Voucher" icon={<Ticket className="size-4" />} />
+          <CardHeader title="Voucher hotspot" icon={<Ticket className="size-4" />} />
           <div className="grid gap-4 p-5 sm:grid-cols-2">
             <Field label="Sinkronisasi status (detik)" hint="Seberapa sering status voucher dicek ke router">
               <Input type="number" min={15} value={s.voucher.syncSeconds} onChange={num('voucher.syncSeconds')} />
@@ -152,6 +156,76 @@ export default function SettingsPage() {
             </div>
             <div className="sm:col-span-2">
               <Toggle checked={s.voucher.autoRemoveExpired} onChange={(v) => set('voucher.autoRemoveExpired', v)} label="Hapus otomatis voucher kedaluwarsa dari router (jika mati: dinonaktifkan)" />
+            </div>
+          </div>
+        </Card>
+
+        <Card className="xl:col-span-2">
+          <CardHeader title="PPPoE & isolir" icon={<Cable className="size-4" />} subtitle="Pelanggan yang masa aktifnya habis dipindah ke profil isolir, bukan diputus" />
+          <div className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
+            <Field label="Nama profil isolir" hint="Dibuat otomatis di router bila belum ada">
+              <Input value={s.pppoe.isolirProfile} onChange={(e) => set('pppoe.isolirProfile', e.target.value)} />
+            </Field>
+            <Field label="Nama pool isolir">
+              <Input value={s.pppoe.isolirPool} onChange={(e) => set('pppoe.isolirPool', e.target.value)} />
+            </Field>
+            <Field label="Rentang IP isolir">
+              <Input value={s.pppoe.isolirPoolRange} onChange={(e) => set('pppoe.isolirPoolRange', e.target.value)} />
+            </Field>
+            <Field label="Gateway isolir">
+              <Input value={s.pppoe.isolirGateway} onChange={(e) => set('pppoe.isolirGateway', e.target.value)} />
+            </Field>
+            <Field label="IP server MIKROTAL" hint="Tujuan pengalihan halaman isolir. Kosong = tanpa pengalihan" className="lg:col-span-2">
+              <Input value={s.pppoe.portalAddress} onChange={(e) => set('pppoe.portalAddress', e.target.value)} placeholder="mis. 192.168.88.10" />
+            </Field>
+            <Field label="Port web MIKROTAL">
+              <Input type="number" min={1} max={65535} value={s.pppoe.portalPort} onChange={num('pppoe.portalPort')} />
+            </Field>
+            <Field label="Pengingat hampir habis (hari)">
+              <Input type="number" min={0} max={30} value={s.pppoe.remindDays} onChange={num('pppoe.remindDays')} />
+            </Field>
+            <Field label="Karakter voucher PPPoE">
+              <Select value={s.pppoe.voucherCharset} onChange={(e) => set('pppoe.voucherCharset', e.target.value)}>
+                <option value="numeric">Angka saja</option>
+                <option value="alnum-upper">Huruf besar + angka</option>
+              </Select>
+            </Field>
+            <Field label="Panjang kode">
+              <Input type="number" min={6} max={16} value={s.pppoe.voucherLength} onChange={num('pppoe.voucherLength')} />
+            </Field>
+            <Field label="Prefix kode">
+              <Input value={s.pppoe.voucherPrefix} onChange={(e) => set('pppoe.voucherPrefix', e.target.value)} />
+            </Field>
+            <Field label="URL halaman isi ulang (QR)" hint="Kosong = alamat aplikasi ini + /isi">
+              <Input value={s.pppoe.topupUrl} onChange={(e) => set('pppoe.topupUrl', e.target.value)} placeholder="http://192.168.88.10/isi" />
+            </Field>
+            <div className="sm:col-span-2 lg:col-span-4">
+              <Toggle checked={s.pppoe.odpDownAlert} onChange={(v) => set('pppoe.odpDownAlert', v)} label="Kirim notifikasi bila semua pelanggan di satu ODP offline bersamaan" />
+            </div>
+            <div className="flex flex-wrap items-center gap-3 border-t border-line pt-4 sm:col-span-2 lg:col-span-4">
+              <Button
+                variant="secondary"
+                icon={<ShieldAlert className="size-4" />}
+                loading={iso.busy}
+                disabled={!router}
+                onClick={async () => {
+                  if (!router) return;
+                  if (
+                    !(await confirm({
+                      title: `Pasang aturan isolir di ${router.name}?`,
+                      message:
+                        'Simpan pengaturan terlebih dahulu. Aplikasi akan menambah pool dan profil isolir, lalu aturan firewall di urutan teratas: pelanggan terisolir hanya boleh DNS dan halaman isi ulang, akses web lain dialihkan ke halaman isolir. Aturan yang sudah ada tidak digandakan.',
+                      confirmText: 'Pasang',
+                    }))
+                  )
+                    return;
+                  const r = await iso.run(() => post<{ done: string[]; portal: boolean }>('/api/pppoe/isolir/setup', { routerId: router.id }));
+                  if (r) toast(r.portal ? 'success' : 'warning', r.done.length ? `${r.done.length} perubahan dipasang` : 'Sudah terpasang, tidak ada perubahan', r.portal ? r.done.join(', ') : `${r.done.join(', ')}${r.done.length ? '. ' : ''}IP server MIKROTAL belum diisi, jadi pengalihan halaman isolir belum dipasang.`);
+                }}
+              >
+                Pasang aturan isolir di router aktif
+              </Button>
+              <p className="text-xs text-muted">Halaman isolir untuk pelanggan: <span className="font-mono">/isolir</span> • halaman isi ulang: <span className="font-mono">/isi</span></p>
             </div>
           </div>
         </Card>

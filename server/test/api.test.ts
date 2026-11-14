@@ -437,3 +437,16 @@ test('PPPoE: reseller membeli voucher dengan harga reseller, operator tidak bisa
   const list = await api('GET', '/api/customers', undefined, ot);
   assert.equal(list.status, 200);
 });
+
+test('pelanggan terisolir dialihkan ke halaman isi voucher', async () => {
+  ctx.settings.update({ pppoe: { portalAddress: '192.168.88.10', portalPort: 8080 } });
+  const hit = (url: string, remoteAddress: string, host = 'example.com') => app.inject({ method: 'GET', url, remoteAddress, headers: { host } });
+  const r = await hit('/berita/hari-ini', '10.99.0.25');
+  assert.equal(r.statusCode, 302);
+  assert.equal(r.headers.location, 'http://192.168.88.10:8080/isolir');
+  assert.equal((await hit('/', '10.99.0.25', '192.168.88.10:8080')).statusCode, 302, 'halaman admin tidak ditampilkan ke pelanggan terisolir');
+  assert.notEqual((await hit('/api/public/brand', '10.99.0.25', '192.168.88.10:8080')).statusCode, 302, 'API halaman isolir tetap bisa diakses');
+  assert.notEqual((await hit('/isolir', '10.99.0.25', '192.168.88.10:8080')).statusCode, 302);
+  assert.notEqual((await hit('/api/health', '192.168.88.50')).statusCode, 302, 'pengguna biasa tidak dialihkan');
+  assert.notEqual((await hit('/api/health', '10.99.4.1')).statusCode, 302, 'di luar rentang pool isolir');
+});

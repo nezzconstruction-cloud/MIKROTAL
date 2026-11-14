@@ -10,8 +10,8 @@ import { RevenueChart } from '../components/charts';
 interface Report {
   from: string;
   to: string;
-  totals: { direct: number; reseller: number; total: number; activations: number; topups: number; directCount: number; resellerCount: number };
-  daily: { date: string; direct: number; reseller: number; count: number }[];
+  totals: { direct: number; reseller: number; pppoe: number; pppoeCount: number; total: number; activations: number; topups: number; directCount: number; resellerCount: number };
+  daily: { date: string; direct: number; reseller: number; pppoe: number; count: number }[];
   byProfile: { profile: string; count: number; amount: number }[];
   byRouter: { router: string; count: number; amount: number }[];
   byReseller: { reseller: string; count: number; amount: number }[];
@@ -83,7 +83,7 @@ export default function Reports() {
     <div className="space-y-5">
       <PageHeader
         title="Laporan Penjualan"
-        subtitle="Pendapatan voucher langsung (saat dipakai) dan penjualan reseller (saat pembelian saldo)"
+        subtitle="PPPoE (saat voucher diisikan atau perpanjangan manual), hotspot langsung (saat dipakai), dan reseller (saat pembelian)"
         icon={<BarChart3 className="size-5" />}
         actions={
           <Button variant="secondary" icon={<FileDown className="size-4" />} onClick={() => run(() => download('/api/reports/sales.csv', { from, to, routerId }, `penjualan-${from}-${to}.csv`).then(() => true))}>
@@ -132,7 +132,7 @@ export default function Reports() {
         <>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard label="Total pendapatan" value={formatMoney(data.totals.total)} icon={<Banknote className="size-5" />} tone="green" />
-            <StatCard label="Penjualan langsung" value={formatMoney(data.totals.direct)} icon={<Ticket className="size-5" />} tone="cyan" sub={`${formatNumber(data.totals.directCount)} voucher terpakai`} />
+            <StatCard label="PPPoE langsung" value={formatMoney(data.totals.pppoe)} icon={<Ticket className="size-5" />} tone="green" sub={`${formatNumber(data.totals.pppoeCount)} isi ulang • hotspot ${formatMoney(data.totals.direct)} (${formatNumber(data.totals.directCount)})`} />
             <StatCard label="Penjualan reseller" value={formatMoney(data.totals.reseller)} icon={<ShoppingCart className="size-5" />} tone="violet" sub={`${formatNumber(data.totals.resellerCount)} voucher dibeli`} />
             <StatCard label="Top up saldo reseller" value={formatMoney(data.totals.topups)} icon={<Wallet className="size-5" />} tone="orange" sub={`${formatNumber(data.totals.activations)} aktivasi total`} />
           </div>
@@ -177,8 +177,9 @@ export default function Reports() {
                 <thead>
                   <tr>
                     <th>Tanggal</th>
-                    <th className="text-right">Voucher</th>
-                    <th className="text-right">Langsung</th>
+                    <th className="text-right">Transaksi</th>
+                    <th className="text-right">PPPoE</th>
+                    <th className="text-right">Hotspot</th>
                     <th className="text-right">Reseller</th>
                     <th className="text-right">Total</th>
                   </tr>
@@ -188,9 +189,10 @@ export default function Reports() {
                     <tr key={d.date}>
                       <td>{new Date(`${d.date}T00:00:00`).toLocaleDateString('id-ID', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}</td>
                       <td className="text-right">{d.count}</td>
+                      <td className="text-right tabular-nums">{formatMoney(d.pppoe)}</td>
                       <td className="text-right tabular-nums">{formatMoney(d.direct)}</td>
                       <td className="text-right tabular-nums">{formatMoney(d.reseller)}</td>
-                      <td className="text-right font-semibold tabular-nums">{formatMoney(d.direct + d.reseller)}</td>
+                      <td className="text-right font-semibold tabular-nums">{formatMoney(d.direct + d.reseller + d.pppoe)}</td>
                     </tr>
                   ))}
                 </tbody>

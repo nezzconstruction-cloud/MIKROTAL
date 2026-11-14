@@ -36,6 +36,14 @@ Dashboard web untuk **monitoring, konfigurasi MikroTik, manajemen hotspot, dan p
 - **Laporan penjualan**: harian, per profil, per reseller, per router, stok voucher, dan ekspor CSV.
 - Halaman publik **/cek** untuk pelanggan memeriksa status dan sisa masa aktif voucher.
 
+### RT/RW Net: pelanggan PPPoE lewat ODC / ODP
+- **Pelanggan**: data pelanggan terhubung ke akun PPPoE (PPP secret) di router, paket, masa aktif, dan port ODP. Status online, IP, dan MAC router klien diperbarui otomatis.
+- **Voucher isi ulang**: voucher adalah kode untuk memperpanjang masa aktif akun pelanggan yang tetap. Pelanggan tidak perlu mengubah setelan router di rumahnya. Sisa masa aktif tidak hangus.
+- **Isolir otomatis**: saat masa aktif habis, akun dipindah ke profil isolir (bukan diputus). Begitu voucher diisikan, profil paket dikembalikan dan sesi disambung ulang.
+- **Halaman pelanggan tanpa login**: `/isi` untuk cek masa aktif dan isi voucher, `/isolir` sebagai tujuan pengalihan saat terisolir.
+- **Topologi ODC → ODP → pelanggan**: status tiap port (online, offline, terisolir, kosong) dan notifikasi bila semua pelanggan di satu ODP mati bersamaan.
+- **Paket & harga**, perpanjangan manual (tunai/transfer), impor akun PPPoE yang sudah ada, voucher untuk reseller, dan laporan penjualan PPPoE.
+
 ### Keamanan & administrasi
 - Multi-pengguna dengan 4 peran: **Super Admin, Admin, Operator, Reseller**.
 - Password router disimpan terenkripsi **AES-256-GCM**, dan password pengguna di-hash dengan **scrypt**.
@@ -133,13 +141,33 @@ Pengaturan lain (nama usaha, ambang alert, Telegram, interval sinkronisasi vouch
 
 Penjualan reseller dihitung saat reseller membeli voucher (saldo terpotong), sedangkan penjualan langsung dihitung saat voucher dipakai.
 
+## Alur PPPoE (RT/RW Net)
+
+1. **Paket & Harga**: buat paket yang menunjuk ke PPP profile di router (kecepatan diatur di profil), isi harga dan masa aktif per voucher.
+2. **Topologi ODC / ODP**: catat ODC, ODP, dan jumlah portnya.
+3. **Pelanggan**: tambah pelanggan baru (akun PPPoE dibuat di router) atau **Impor dari router** untuk akun yang sudah ada, lalu tempatkan di port ODP.
+4. **Voucher Isi Ulang**: buat dan cetak voucher. Pelanggan mengisinya sendiri di `/isi`, atau operator lewat tombol **Isi voucher** di daftar pelanggan.
+5. Saat masa aktif habis, pelanggan diisolir otomatis pada sinkronisasi berikutnya (default tiap 60 detik).
+
+### Menyiapkan isolir di router
+
+Di **Pengaturan → PPPoE & isolir**, isi **IP server MIKROTAL** (alamat yang bisa dijangkau pelanggan), simpan, lalu klik **Pasang aturan isolir di router aktif**. Aplikasi menambahkan:
+
+- IP pool dan PPP profile isolir (`address-list=isolir`, kecepatan 512k),
+- filter `forward` di urutan teratas: izinkan DNS dan IP server MIKROTAL, blokir sisanya untuk `src-address-list=isolir`,
+- NAT `dstnat` yang mengalihkan HTTP (port 80) pelanggan terisolir ke MIKROTAL.
+
+Semua aturan diberi komentar `MIKROTAL-ISOLIR` dan tidak digandakan bila tombol ditekan lagi. Permintaan dari IP pool isolir otomatis diarahkan MIKROTAL ke halaman `/isolir` (form isi voucher), sehingga MIKROTAL harus melihat IP asli pelanggan: jangan lewatkan trafik isolir melalui masquerade, dan bila memakai reverse proxy pastikan header `X-Forwarded-For` diteruskan. Situs HTTPS tidak bisa dialihkan; pelanggan perlu membuka situs HTTP apa pun atau alamat `/isi` secara langsung.
+
+> Aplikasi menjadi acuan status akun: bila profil atau status disabled sebuah akun pelanggan diubah langsung di Winbox, sinkronisasi berikutnya mengembalikannya sesuai data di MIKROTAL.
+
 ## Peran pengguna
 
 | Peran | Hak akses |
 |---|---|
 | Super Admin | Semua, termasuk pengguna aplikasi, pengaturan, dan perintah terminal berbahaya |
 | Admin | Router, konfigurasi, hotspot, voucher, reseller, laporan, terminal, reboot |
-| Operator | Monitoring, hotspot (putus sesi, IP binding, dll), buat & cetak voucher, laporan. Tidak bisa mengubah konfigurasi jaringan |
+| Operator | Monitoring, hotspot (putus sesi, IP binding, dll), pelanggan PPPoE & topologi ODC/ODP, buat & cetak voucher, laporan. Tidak bisa mengubah konfigurasi jaringan |
 | Reseller | Membuat & mencetak voucher dari saldo sendiri, melihat voucher & transaksinya |
 
 ## Pengembangan
