@@ -1,0 +1,4 @@
+# Skrip Windows harus CRLF: cmd.exe salah membaca label/goto pada file berakhiran LF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

@@ -80,6 +80,17 @@ Buka `http://localhost:8080` di komputer yang sama, atau `http://IP-KOMPUTER:808
 
 Aplikasi berjalan selama jendela terminal itu terbuka. Tekan `Ctrl+C` untuk menghentikan.
 
+Di Windows, cukup **klik dua kali `mikrotal-start.bat`** di folder MIKROTAL. File ini memeriksa Node.js dan `.env`, menjalankan `npm install`/`npm run build` bila belum pernah, lalu menyalakan server dan menyalakannya lagi otomatis bila berhenti karena error.
+
+### Setelah komputer mati atau restart
+
+Server tidak ikut menyala sendiri. Data tetap tersimpan di folder `data`, jadi cukup jalankan lagi:
+
+- **Windows:** klik dua kali `mikrotal-start.bat`.
+- **Linux/macOS:** masuk ke folder MIKROTAL, lalu `npm start`.
+
+Tidak perlu `npm install` atau `npm run build` lagi, kecuali setelah update. Agar menyala sendiri, lihat [bagian D](#d-menjalankan-otomatis-saat-komputer-menyala).
+
 ### 5. Setelah login pertama
 
 1. **Router → Tambah router**: hubungkan MikroTik asli (lihat bagian *Menghubungkan MikroTik asli* di `README.md`).
@@ -97,7 +108,7 @@ Database tidak perlu diubah manual: tabel dan kolom baru dibuat otomatis saat ap
 
 ### 1. Hentikan aplikasi
 
-Tekan `Ctrl+C` di terminal yang menjalankan `npm start` (atau hentikan layanannya bila memakai systemd).
+Tekan `Ctrl+C` di terminal yang menjalankan `npm start` (atau hentikan layanannya bila memakai systemd). Bila memakai autostart Windows tanpa login, hentikan task **MIKROTAL** di Task Scheduler (klik kanan → End).
 
 ### 2. Cadangkan data
 
@@ -183,7 +194,32 @@ docker compose up -d --build
 
 ---
 
-## D. Menjalankan otomatis saat server menyala (Linux, opsional)
+## D. Menjalankan otomatis saat komputer menyala
+
+Selama MIKROTAL mati, voucher yang habis belum dinonaktifkan dan tidak ada pemantauan. Voucher yang terlewat langsung diproses begitu MIKROTAL menyala lagi. Untuk dipakai sungguhan, sebaiknya komputer menyala 24 jam (mini PC/VPS juga bisa).
+
+### Windows
+
+Buka folder `scripts\windows`, lalu klik dua kali salah satu file:
+
+| File | Fungsi |
+|---|---|
+| `pasang-autostart.bat` | MIKROTAL menyala setiap kali Anda **login** ke Windows. Jendelanya muncul kecil di taskbar; jangan ditutup, karena server ikut mati. Tidak butuh izin Administrator. |
+| `pasang-autostart-tanpa-login.bat` | MIKROTAL menyala saat **komputer hidup**, walau belum ada yang login, tanpa jendela (Task Scheduler, akun SYSTEM). Butuh izin Administrator. Log ada di `logs\mikrotal.log`. Cocok untuk komputer yang khusus menjalankan MIKROTAL. |
+| `status-autostart.bat` | Melihat autostart yang terpasang. |
+| `hapus-autostart.bat` | Menghapus autostart (keduanya). |
+
+Pilih salah satu saja; memasang yang satu otomatis mencegah yang lain agar MIKROTAL tidak jalan dua kali.
+
+Untuk pilihan "tanpa login", pasang Node.js dengan installer resmi dari nodejs.org (bukan nvm), agar Node.js bisa dipakai akun SYSTEM. Atur juga Windows agar tidak tidur: **Settings → System → Power → Sleep: Never**.
+
+Bila folder MIKROTAL dipindah, jalankan lagi file pemasang autostart.
+
+### Docker
+
+`docker-compose.yml` sudah memakai `restart: unless-stopped`, jadi container menyala lagi setiap Docker berjalan. Di Windows/macOS, aktifkan **Start Docker Desktop when you sign in** di pengaturan Docker Desktop.
+
+### Linux (systemd)
 
 Contoh layanan systemd. Sesuaikan `User` dan `WorkingDirectory` dengan lokasi instalasi Anda, simpan sebagai `/etc/systemd/system/mikrotal.service`:
 

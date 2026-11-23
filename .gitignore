@@ -9,5 +9,6 @@ data/
 .env.local
 coverage/
 *.log
+logs/
 .DS_Store
 web/test-results/
