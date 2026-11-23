@@ -107,7 +107,27 @@ export class CloudHost {
     return (await this.instance(r.slug)).app;
   }
 
+  /** Boleh dibuatkan sertifikat HTTPS? (dipanggil Caddy on_demand_tls sebelum menerbitkan sertifikat subdomain) */
+  tlsAllowed(domain: string) {
+    const r = this.route(domain);
+    if (!r) return false;
+    if (r.kind === 'platform') return true;
+    const t = this.platform.tenantBySlug(r.slug);
+    return !!t && t.status !== 'deleted';
+  }
+
   private async handle(req: http.IncomingMessage, res: http.ServerResponse) {
+    const url = req.url ?? '/';
+    // Dipanggil dari dalam server (healthcheck Docker, Caddy) tanpa Host domain
+    if (url === '/api/health') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, mode: 'cloud' }));
+    }
+    if (url.startsWith('/_tls-check')) {
+      const domain = new URL(url, 'http://local').searchParams.get('domain') ?? '';
+      res.writeHead(this.tlsAllowed(domain) ? 200 : 404);
+      return res.end();
+    }
     try {
       const app = await this.target(req);
       if (app) return app.routing(req, res);

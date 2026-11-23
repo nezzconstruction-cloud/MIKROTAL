@@ -1,0 +1,16 @@
+# Sertifikat HTTPS diterbitkan otomatis saat domain pertama kali dibuka (on-demand TLS),
+# hanya untuk domain utama dan subdomain pelanggan yang terdaftar (diperiksa ke /_tls-check).
+{
+	email {$ACME_EMAIL}
+	on_demand_tls {
+		ask http://127.0.0.1:8080/_tls-check
+	}
+}
+
+https:// {
+	tls {
+		on_demand
+	}
+	encode gzip
+	reverse_proxy 127.0.0.1:8080
+}

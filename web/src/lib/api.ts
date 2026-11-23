@@ -46,6 +46,12 @@ export function setUnauthorizedHandler(fn: () => void) {
   onUnauthorized = fn;
 }
 
+/** MIKROTAL Cloud: langganan habis/dihentikan (HTTP 402) → arahkan ke halaman Langganan. */
+let onSubscriptionInactive: (() => void) | undefined;
+export function setSubscriptionInactiveHandler(fn: (() => void) | undefined) {
+  onSubscriptionInactive = fn;
+}
+
 export async function api<T = any>(path: string, opts: { method?: string; body?: unknown; query?: Query; signal?: AbortSignal } = {}): Promise<T> {
   const headers: Record<string, string> = {};
   const token = getToken();
@@ -67,6 +73,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   const data = ct.includes('application/json') ? await res.json().catch(() => ({})) : await res.text();
   if (!res.ok) {
     if (res.status === 401 && token) onUnauthorized?.();
+    if (res.status === 402 && typeof data === 'object' && (data as any)?.code === 'SUBSCRIPTION_INACTIVE') onSubscriptionInactive?.();
     const message = typeof data === 'object' && data && 'error' in data ? String((data as any).error) : `Permintaan gagal (${res.status})`;
     throw new ApiError(res.status, message, data);
   }

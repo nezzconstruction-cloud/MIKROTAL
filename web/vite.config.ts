@@ -12,6 +12,8 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    // index.html = aplikasi MIKROTAL; platform.html = halaman pendaftaran & admin MIKROTAL Cloud
+    rollupOptions: { input: { main: 'index.html', platform: 'platform.html' } },
     chunkSizeWarningLimit: 1500,
   },
 });

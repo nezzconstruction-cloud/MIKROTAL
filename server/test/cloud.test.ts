@@ -155,6 +155,12 @@ test('pendaftaran: subdomain sendiri, data dan login terpisah antar pelanggan', 
   assert.ok(!usersB.some((u: any) => u.name === 'hanya-di-a'));
 
   assert.equal((await call('GET', tenantHost('tidak-ada'), '/api/auth/me')).status, 404);
+  // Caddy on-demand TLS: sertifikat hanya untuk domain utama dan pelanggan yang terdaftar
+  assert.equal((await call('GET', '127.0.0.1', `/_tls-check?domain=${tenantHost('rtrw-jaya')}`)).status, 200);
+  assert.equal((await call('GET', '127.0.0.1', `/_tls-check?domain=${DOMAIN}`)).status, 200);
+  assert.equal((await call('GET', '127.0.0.1', `/_tls-check?domain=${tenantHost('tidak-ada')}`)).status, 404);
+  assert.equal((await call('GET', '127.0.0.1', '/_tls-check?domain=evil.example.com')).status, 404);
+  assert.equal((await call('GET', '127.0.0.1', '/api/health')).status, 200);
   const sub = await call('GET', tenantHost('rtrw-jaya'), '/api/cloud/subscription', undefined, tokA);
   assert.equal(sub.body.status.phase, 'trial');
   assert.equal(sub.body.status.maxRouters, 1);

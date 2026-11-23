@@ -12,3 +12,4 @@ coverage/
 logs/
 .DS_Store
 web/test-results/
+deploy/cloud/caddy/
