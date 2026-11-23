@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import type { DB } from '../db/index.js';
-import { parseDuration } from '../lib/duration.js';
+import { formatDuration, parseDuration } from '../lib/duration.js';
 import type { RosRow } from '../lib/routeros/types.js';
-import type { Hub } from './alerts.js';
+import type { AlertService, Hub } from './alerts.js';
 import type { RouterManager } from './routers.js';
 import type { SettingsService } from './settings.js';
 
@@ -81,7 +81,18 @@ export interface VoucherRow {
   last_seen_at: string | null;
   router_item_id: string;
   created_at: string;
+  raw_uptime: number;
+  raw_bytes_in: number;
+  raw_bytes_out: number;
+  uptime_offset: number;
+  bytes_in_offset: number;
+  bytes_out_offset: number;
+  counter_resets: number;
 }
+
+/** Bila sebanyak ini voucher hilang sekaligus dari router, anggap data router belum lengkap (mis. baru reboot/update). */
+const MASS_MISSING_MIN = 4;
+const MASS_MISSING_RATIO = 0.5;
 
 export const VOUCHER_COMMENT_PREFIX = 'MIKROTAL';
 
@@ -114,6 +125,7 @@ export class HttpError extends Error {
 export class VoucherService {
   private syncing = new Set<number>();
   private timer?: NodeJS.Timeout;
+  private lastAnomalyAlert = new Map<number, number>();
 
   constructor(
     private readonly db: DB,
@@ -121,6 +133,7 @@ export class VoucherService {
     private readonly settings: SettingsService,
     private readonly hub: Hub,
     private readonly log: { warn: (...a: any[]) => void } = console,
+    private readonly alerts?: AlertService,
   ) {}
 
   start() {
@@ -231,13 +244,17 @@ export class VoucherService {
     return { batch, created: ok.length, failed: failed.length, errors: failed.slice(0, 3).map((f) => f.reason?.message ?? String(f.reason)) };
   }
 
-  /** Sinkronkan status voucher dengan router: aktivasi, pemakaian, kedaluwarsa. */
+  /**
+   * Sinkronkan status voucher dengan router: aktivasi, pemakaian, kedaluwarsa.
+   * Tahan terhadap reboot/update RouterOS: counter yang tereset dijumlahkan, dan voucher tidak
+   * ditandai "dihapus" bila daftar user di router mendadak kosong/tidak lengkap.
+   */
   async sync(routerId: number) {
     if (this.syncing.has(routerId)) return { skipped: true };
     this.syncing.add(routerId);
     try {
-      const vouchers = this.db.all<VoucherRow>(`SELECT * FROM vouchers WHERE router_id = ? AND status IN ('unused','active','used','disabled')`, [routerId]);
-      if (!vouchers.length) return { checked: 0, activated: 0, expired: 0, missing: 0 };
+      const vouchers = this.db.all<VoucherRow>(`SELECT * FROM vouchers WHERE router_id = ? AND status IN ('unused','active','used','disabled','removed')`, [routerId]);
+      if (!vouchers.length) return { checked: 0, activated: 0, expired: 0, missing: 0, resets: 0, restored: 0 };
       const [users, active] = await Promise.all([
         this.routers.exec(routerId, '/ip/hotspot/user/print', { '.proplist': '.id,name,uptime,bytes-in,bytes-out,disabled,comment' }),
         this.routers.exec(routerId, '/ip/hotspot/active/print', { '.proplist': '.id,user,address,mac-address,uptime,bytes-in,bytes-out' }),
@@ -247,22 +264,55 @@ export class VoucherService {
       const s = this.settings.get();
       const now = Date.now();
       const nowIso = new Date(now).toISOString();
-      const stats = { checked: vouchers.length, activated: 0, expired: 0, missing: 0 };
+      const stats = { checked: vouchers.length, activated: 0, expired: 0, missing: 0, resets: 0, restored: 0, deferred: false };
+
+      // Banyak voucher hilang sekaligus → jangan tandai dihapus, tunggu router stabil
+      const tracked = vouchers.filter((v) => v.status !== 'removed');
+      const missingNow = tracked.filter((v) => !userMap.has(v.code));
+      const deferMissing = missingNow.length >= MASS_MISSING_MIN && missingNow.length >= tracked.length * MASS_MISSING_RATIO;
+      if (deferMissing) {
+        stats.deferred = true;
+        const last = this.lastAnomalyAlert.get(routerId) ?? 0;
+        if (now - last > 3600_000) {
+          this.lastAnomalyAlert.set(routerId, now);
+          this.alerts?.create({
+            routerId,
+            level: 'warning',
+            type: 'voucher.sync.deferred',
+            title: 'Sinkronisasi voucher ditunda',
+            message: `${missingNow.length} dari ${tracked.length} voucher tidak terlihat di router sekaligus (mungkin router baru reboot/update). Status voucher tidak diubah sampai data router lengkap kembali.`,
+          });
+        }
+      }
 
       for (const v of vouchers) {
         const u = userMap.get(v.code);
         const a = activeMap.get(v.code);
         if (!u) {
-          if (v.status !== 'removed') {
+          if (v.status !== 'removed' && !deferMissing) {
             this.db.run(`UPDATE vouchers SET status = 'removed' WHERE id = ?`, [v.id]);
             stats.missing++;
           }
           continue;
         }
-        const uptime = parseDuration(u.uptime);
-        const bytesIn = Number(u['bytes-in'] ?? 0);
-        const bytesOut = Number(u['bytes-out'] ?? 0);
-        const used = !!a || uptime > 0 || bytesIn + bytesOut > 0;
+        if (v.status === 'removed') stats.restored++;
+
+        const rawUptime = parseDuration(u.uptime);
+        const rawIn = Number(u['bytes-in'] ?? 0);
+        const rawOut = Number(u['bytes-out'] ?? 0);
+        let { uptime_offset: upOff, bytes_in_offset: inOff, bytes_out_offset: outOff } = v;
+        // Counter mundur = tereset di router (reboot tak bersih, update, reset-counters)
+        const reset = rawUptime + 5 < v.raw_uptime || rawIn + rawOut < v.raw_bytes_in + v.raw_bytes_out;
+        if (reset) {
+          upOff += v.raw_uptime;
+          inOff += v.raw_bytes_in;
+          outOff += v.raw_bytes_out;
+          stats.resets++;
+        }
+        const uptime = upOff + rawUptime;
+        const bytesIn = inOff + rawIn;
+        const bytesOut = outOff + rawOut;
+        const used = !!a || uptime > 0 || bytesIn + bytesOut > 0 || !!v.activated_at;
         let activatedAt = v.activated_at;
         let expiresAt = v.expires_at;
         if (used && !activatedAt) {
@@ -277,6 +327,14 @@ export class VoucherService {
           (expiresAt && Date.parse(expiresAt) <= now) ||
           (timeLimit > 0 && uptime >= timeLimit) ||
           (v.data_limit > 0 && bytesIn + bytesOut >= v.data_limit);
+
+        // Setelah counter tereset, batas di router disesuaikan dengan sisa yang sebenarnya
+        if (reset && !isExpired && (timeLimit > 0 || v.data_limit > 0)) {
+          const params: Record<string, string> = { '.id': u['.id'] };
+          if (timeLimit > 0) params['limit-uptime'] = formatDuration(Math.max(1, timeLimit - upOff));
+          if (v.data_limit > 0) params['limit-bytes-total'] = String(Math.max(1, v.data_limit - inOff - outOff));
+          await this.routers.exec(routerId, '/ip/hotspot/user/set', params).catch((err) => this.log.warn({ err }, `Gagal menyesuaikan batas voucher ${v.code}`));
+        }
 
         let status: VoucherRow['status'] = u.disabled === 'true' ? 'disabled' : a ? 'active' : used ? 'used' : 'unused';
         if (isExpired) {
@@ -293,12 +351,13 @@ export class VoucherService {
         this.db.run(
           `UPDATE vouchers SET status = ?, uptime_seconds = ?, bytes_in = ?, bytes_out = ?, activated_at = ?, expires_at = ?,
              mac = COALESCE(NULLIF(?, ''), mac), ip = COALESCE(NULLIF(?, ''), ip), last_seen_at = CASE WHEN ? THEN ? ELSE last_seen_at END,
-             router_item_id = ?
+             router_item_id = ?, raw_uptime = ?, raw_bytes_in = ?, raw_bytes_out = ?, uptime_offset = ?, bytes_in_offset = ?, bytes_out_offset = ?,
+             counter_resets = counter_resets + ?
            WHERE id = ?`,
-          [status, uptime, bytesIn, bytesOut, activatedAt, expiresAt, a?.['mac-address'] ?? '', a?.address ?? '', a ? 1 : 0, nowIso, u['.id'] ?? v.router_item_id, v.id],
+          [status, uptime, bytesIn, bytesOut, activatedAt, expiresAt, a?.['mac-address'] ?? '', a?.address ?? '', a ? 1 : 0, nowIso, u['.id'] ?? v.router_item_id, rawUptime, rawIn, rawOut, upOff, inOff, outOff, reset ? 1 : 0, v.id],
         );
       }
-      if (stats.activated || stats.expired || stats.missing) this.hub.emit('vouchers', { routerId });
+      if (stats.activated || stats.expired || stats.missing || stats.resets || stats.restored) this.hub.emit('vouchers', { routerId });
       return stats;
     } finally {
       this.syncing.delete(routerId);
