@@ -5,7 +5,7 @@ import { Clock, Gauge, Layers, Pencil, Plus, Ticket, Trash2, Users } from 'lucid
 import { del, get, post, put } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { durationLabel, formatBytes, formatMoney } from '../lib/format';
-import { Badge, Button, Card, EmptyState, ErrorBox, Field, IconButton, Input, Loading, Modal, PageHeader, useAction, useFeedback } from '../components/ui';
+import { Badge, Button, Card, EmptyState, ErrorBox, Field, IconButton, Input, Loading, Modal, PageHeader, Toggle, useAction, useFeedback } from '../components/ui';
 import { RequireRouter } from '../components/RequireRouter';
 
 interface Profile {
@@ -19,7 +19,7 @@ interface Profile {
   'address-pool'?: string;
   'parent-queue'?: string;
   'mac-cookie-timeout'?: string;
-  meta: { price: number; reseller_price: number; validity: string; time_limit: string; data_limit: number; color: string };
+  meta: { price: number; reseller_price: number; validity: string; time_limit: string; data_limit: number; color: string; lock_mac: boolean };
   users: number;
   stock: number;
 }
@@ -51,6 +51,7 @@ function ProfileForm({ routerId, initial, onClose }: { routerId: number; initial
     time_limit: initial?.meta.time_limit ?? '',
     data_limit: initial?.meta.data_limit ? formatBytes(initial.meta.data_limit, 0).replace(' ', '').replace('B', '') : '',
     color: initial?.meta.color ?? '',
+    lock_mac: initial?.meta.lock_mac ?? false,
   }));
   const set = (k: keyof typeof f, v: any) => setF((x) => ({ ...x, [k]: v }));
 
@@ -111,6 +112,10 @@ function ProfileForm({ routerId, initial, onClose }: { routerId: number; initial
         <Field label="Warna label voucher">
           <Input type="color" className="h-[38px] p-1" value={f.color || '#06b6d4'} onChange={(e) => set('color', e.target.value)} />
         </Field>
+      </div>
+      <div className="mt-4">
+        <Toggle checked={f.lock_mac} onChange={(v) => set('lock_mac', v)} label="Kunci voucher ke perangkat pertama yang login (MAC)" />
+        <p className="mt-1 text-[11px] text-subtle">Sama seperti "Lock User" di Mikhmon. Voucher tidak bisa dipindah ke HP lain setelah dipakai.</p>
       </div>
       <p className="mb-3 mt-6 text-xs font-semibold uppercase tracking-wider text-subtle">Pengaturan di router</p>
       <div className="grid gap-4 sm:grid-cols-3">

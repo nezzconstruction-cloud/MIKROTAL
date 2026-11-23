@@ -323,4 +323,40 @@ export const migrations: { version: number; sql: string }[] = [
       );
     `,
   },
+  {
+    version: 5,
+    sql: `
+      -- Pemakaian voucher tetap terhitung walau counter user hotspot di router tereset (reboot, update, reset-counters)
+      ALTER TABLE vouchers ADD COLUMN raw_uptime INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE vouchers ADD COLUMN raw_bytes_in INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE vouchers ADD COLUMN raw_bytes_out INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE vouchers ADD COLUMN uptime_offset INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE vouchers ADD COLUMN bytes_in_offset INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE vouchers ADD COLUMN bytes_out_offset INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE vouchers ADD COLUMN counter_resets INTEGER NOT NULL DEFAULT 0;
+      UPDATE vouchers SET raw_uptime = uptime_seconds, raw_bytes_in = bytes_in, raw_bytes_out = bytes_out;
+    `,
+  },
+  {
+    version: 6,
+    sql: `
+      -- Cadangan script Mikhmon yang dinonaktifkan saat MIKROTAL mengambil alih, agar bisa dikembalikan
+      CREATE TABLE mikhmon_backups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        router_id INTEGER NOT NULL REFERENCES routers(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('profile','scheduler')),
+        name TEXT NOT NULL,
+        value TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        UNIQUE (router_id, kind, name)
+      );
+    `,
+  },
+  {
+    version: 7,
+    sql: `
+      -- Kunci voucher ke perangkat (MAC) pertama yang login, pengganti fitur "Lock User" Mikhmon
+      ALTER TABLE profile_meta ADD COLUMN lock_mac INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];

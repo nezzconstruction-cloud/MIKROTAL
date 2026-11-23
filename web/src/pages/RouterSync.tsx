@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, CheckCircle2, Download, Package, RefreshCw, RefreshCcwDot, Users, Wifi } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, Download, Package, RefreshCw, RefreshCcwDot, RotateCcw, Users, Wifi } from 'lucide-react';
 import clsx from 'clsx';
 import { get, post } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { durationLabel, formatDate, formatMoney } from '../lib/format';
 import { RequireRouter } from '../components/RequireRouter';
-import { Badge, Button, Card, CardHeader, EmptyState, ErrorBox, Field, Input, Loading, Modal, PageHeader, useAction, useFeedback } from '../components/ui';
+import { Badge, Button, Card, CardHeader, EmptyState, ErrorBox, Field, Input, Loading, Modal, PageHeader, Toggle, useAction, useFeedback } from '../components/ui';
 
 interface SyncData {
   ppp: {
@@ -17,9 +17,162 @@ interface SyncData {
     missingOnRouter: { id: number; name: string; username: string }[];
     customers: number;
   };
-  hotspot: { profiles: { name: string; rateLimit: string; priced: boolean; users: number }[]; usersTotal: number; notTracked: number } | null;
+  hotspot: { profiles: { name: string; rateLimit: string; priced: boolean; users: number }[]; usersTotal: number; notTracked: number; members: number } | null;
   live: { key: string; label: string; to: string; count: number | null }[];
   scannedAt: string;
+}
+
+interface MikhmonInfo {
+  detected: boolean;
+  profiles: { name: string; expMode: string; price: number; validity: string; lockUser: string; scriptActive: boolean }[];
+  schedulers: { name: string; interval: string; disabled: boolean }[];
+  users: { total: number; untracked: number; vouchers: number; vouchersUntracked: number; datedFuture: number; datedPast: number; badComment: number };
+  takenOver: boolean;
+  autoRemoveExpired: boolean;
+  backups: { kind: string; name: string; at: string }[];
+}
+
+function MikhmonCard({ routerId, onChanged }: { routerId: number; onChanged: () => void }) {
+  const { can } = useAuth();
+  const { confirm, toast } = useFeedback();
+  const { run, busy } = useAction();
+  const [open, setOpen] = useState(false);
+  const [disableScripts, setDisableScripts] = useState(true);
+  const [result, setResult] = useState<string[] | null>(null);
+  const { data, refetch } = useQuery({ queryKey: ['mikhmon', routerId], queryFn: () => get<MikhmonInfo>(`/api/routers/${routerId}/mikhmon`) });
+  if (!data || (!data.detected && !data.takenOver)) return null;
+  const write = can('config.write');
+  const activeScripts = data.profiles.filter((p) => p.scriptActive).length + data.schedulers.filter((s) => !s.disabled).length;
+  const lockedProfiles = data.profiles.filter((p) => /^enable/i.test(p.lockUser)).map((p) => p.name);
+
+  const takeover = async () => {
+    const r = await run(() => post<{ steps: string[] }>(`/api/routers/${routerId}/mikhmon/takeover`, { disableScripts }));
+    if (!r) return;
+    setResult(r.steps);
+    setOpen(false);
+    toast('success', 'MIKROTAL mengambil alih voucher Mikhmon');
+    void refetch();
+    onChanged();
+  };
+  const restore = async () => {
+    if (!(await confirm({ title: 'Kembalikan script Mikhmon?', message: 'Script on-login dan scheduler Mikhmon diaktifkan lagi seperti semula. Di RouterOS 7.10 ke atas script itu bisa kembali menghapus voucher sebelum waktunya.', confirmText: 'Kembalikan', danger: true }))) return;
+    const r = await run(() => post<{ restored: number; missing: string[] }>(`/api/routers/${routerId}/mikhmon/restore`));
+    if (!r) return;
+    toast('success', `${r.restored} script Mikhmon dikembalikan`, r.missing.length ? `Tidak ditemukan lagi di router: ${r.missing.join(', ')}` : undefined);
+    void refetch();
+    onChanged();
+  };
+
+  return (
+    <Card className={clsx('overflow-hidden', activeScripts > 0 && 'border-amber-500/50')}>
+      <CardHeader
+        title="Voucher Mikhmon"
+        subtitle={data.takenOver ? 'Sudah diambil alih MIKROTAL. Script Mikhmon dinonaktifkan dan dicadangkan.' : `${data.profiles.length} profil dan ${data.schedulers.length} scheduler Mikhmon ditemukan di router`}
+        icon={<AlertTriangle className="size-4" />}
+        actions={
+          write && (
+            <div className="flex flex-wrap gap-2">
+              {data.takenOver && (
+                <Button size="sm" variant="secondary" icon={<RotateCcw className="size-3.5" />} loading={busy} onClick={restore}>
+                  Kembalikan script Mikhmon
+                </Button>
+              )}
+              {(activeScripts > 0 || data.users.vouchersUntracked > 0) && (
+                <Button size="sm" icon={<Download className="size-3.5" />} onClick={() => setOpen(true)}>
+                  Ambil alih dari Mikhmon
+                </Button>
+              )}
+            </div>
+          )
+        }
+      />
+      <div className="space-y-3 p-5 text-sm">
+        {activeScripts > 0 && (
+          <p className="rounded-xl bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+            Script Mikhmon membaca tanggal format lama. Sejak RouterOS 7.10 format tanggal berubah (mis. <span className="font-mono">nov/23/2026</span> → <span className="font-mono">2026-11-23</span>), sehingga voucher bisa langsung habis, tidak bisa login, hilang dari daftar, atau malah tidak pernah habis. Setelah diambil alih, masa aktif diatur MIKROTAL memakai jam komputer MIKROTAL, bukan script di router.
+          </p>
+        )}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {[
+            ['Voucher Mikhmon', data.users.vouchers],
+            ['Belum dipantau', data.users.vouchersUntracked],
+            ['Ada tanggal habis', data.users.datedFuture + data.users.datedPast],
+            ['Tanggal rusak', data.users.badComment],
+          ].map(([l, v]) => (
+            <div key={l as string} className="rounded-xl bg-surface-2 p-3">
+              <p className="text-[11px] text-muted">{l}</p>
+              <p className="mt-1 text-xl font-bold tabular-nums">{v}</p>
+            </div>
+          ))}
+        </div>
+        {data.profiles.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {data.profiles.map((p) => (
+              <Badge key={p.name} tone={p.scriptActive ? 'yellow' : 'gray'} dot>
+                {p.name} • {formatMoney(p.price)} / {p.validity ? durationLabel(p.validity) : '—'} • script {p.scriptActive ? 'aktif' : 'nonaktif'}
+              </Badge>
+            ))}
+            {data.schedulers.map((s) => (
+              <Badge key={s.name} tone={s.disabled ? 'gray' : 'yellow'} dot>
+                scheduler {s.name} • {s.disabled ? 'nonaktif' : 'aktif'}
+              </Badge>
+            ))}
+          </div>
+        )}
+        {result && (
+          <ul className="list-disc space-y-0.5 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3 pl-7 text-xs text-muted">
+            {result.map((r, i) => (
+              <li key={i}>{r}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Ambil alih voucher dari Mikhmon"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setOpen(false)}>
+              Batal
+            </Button>
+            <Button loading={busy} onClick={takeover}>
+              Ambil alih
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4 text-sm">
+          <ol className="list-decimal space-y-1.5 pl-5 text-muted">
+            <li>
+              <b className="text-fg">{data.users.vouchersUntracked}</b> voucher Mikhmon (komentar <span className="font-mono">vc-</span>/<span className="font-mono">up-</span> atau tanggal habis) diimpor. Akun member biasa tidak disentuh.
+            </li>
+            <li>Voucher yang sudah berjalan memakai tanggal habis dari komentarnya, jadi tidak mendapat masa aktif baru. Bila tanggalnya rusak, masa aktif dihitung mulai sekarang.</li>
+            {data.users.datedPast > 0 && (
+              <li>
+                <b className="text-fg">{data.users.datedPast}</b> voucher yang tanggal habisnya sudah lewat hanya <b className="text-fg">dinonaktifkan</b>, tidak dihapus. Tanggal itu ditulis script lama yang bisa keliru, jadi periksa dulu di daftar voucher sebelum menghapusnya.
+              </li>
+            )}
+            <li>Harga dan masa aktif profil diambil dari data Mikhmon bila belum diisi di MIKROTAL.</li>
+            {disableScripts && lockedProfiles.length > 0 && (
+              <li>
+                Kunci MAC (Lock User) untuk profil <b className="text-fg">{lockedProfiles.join(', ')}</b> kini dijalankan MIKROTAL, karena script on-login yang menguncinya dikosongkan.
+              </li>
+            )}
+            {disableScripts && (
+              <li>
+                Voucher yang habis setelah ini akan <b className="text-fg">{data.autoRemoveExpired ? 'dihapus' : 'dinonaktifkan'}</b> dari router sesuai Pengaturan → Voucher, bukan mode kedaluwarsa di Mikhmon.
+              </li>
+            )}
+          </ol>
+          <Toggle checked={disableScripts} onChange={setDisableScripts} label="Nonaktifkan script on-login dan scheduler Mikhmon (disarankan)" />
+          <p className="text-[11px] text-subtle">
+            Script asli disimpan dan bisa dikembalikan. Bila dibiarkan aktif, script Mikhmon dan MIKROTAL sama-sama mengatur voucher dan script lama tetap bisa menghapus voucher sebelum waktunya.
+          </p>
+        </div>
+      </Modal>
+    </Card>
+  );
 }
 
 function PackagesModal({ routerId, profiles, onClose, onDone }: { routerId: number; profiles: string[]; onClose: () => void; onDone: () => void }) {
@@ -80,7 +233,7 @@ function Inner({ routerId, routerName }: { routerId: number; routerName: string 
   const [modal, setModal] = useState(false);
   const { data, isLoading, error, refetch, isFetching } = useQuery({ queryKey: ['sync', routerId], queryFn: () => get<SyncData>(`/api/routers/${routerId}/sync`) });
   const refresh = () => {
-    for (const k of ['sync', 'ppp-packages', 'customers', 'pppoe-summary', 'vouchers', 'topology']) void qc.invalidateQueries({ queryKey: [k] });
+    for (const k of ['sync', 'ppp-packages', 'customers', 'pppoe-summary', 'vouchers', 'topology', 'mikhmon', 'hs-profiles']) void qc.invalidateQueries({ queryKey: [k] });
   };
   if (isLoading) return <Loading text="Membaca data router..." />;
   if (error || !data) return <ErrorBox error={error} onRetry={() => refetch()} />;
@@ -99,7 +252,7 @@ function Inner({ routerId, routerName }: { routerId: number; routerName: string 
     }
   };
   const importHotspot = async () => {
-    const r = await run(() => post<{ imported: number }>(`/api/routers/${routerId}/hotspot/import`, {}));
+    const r = await run(() => post<{ imported: number }>(`/api/routers/${routerId}/hotspot/import`, { vouchersOnly: true }));
     if (r) {
       toast('success', `${r.imported} user hotspot dipantau sebagai voucher`);
       refresh();
@@ -267,7 +420,7 @@ function Inner({ routerId, routerName }: { routerId: number; routerName: string 
               {hs.notTracked > 0 ? (
                 <div className="flex flex-wrap items-center gap-3">
                   <p className="text-sm">
-                    <b>{hs.notTracked}</b> user hotspot belum dipantau sebagai voucher.
+                    <b>{hs.notTracked}</b> voucher hotspot belum dipantau.
                   </p>
                   {can('voucher.write') && (
                     <Button size="sm" variant="secondary" icon={<Download className="size-3.5" />} loading={busy} onClick={importHotspot}>
@@ -277,15 +430,18 @@ function Inner({ routerId, routerName }: { routerId: number; routerName: string 
                 </div>
               ) : (
                 <p className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
-                  <CheckCircle2 className="size-4" /> Semua user hotspot sudah dipantau.
+                  <CheckCircle2 className="size-4" /> Semua voucher hotspot sudah dipantau.
                 </p>
               )}
+              {hs.members > 0 && <p className="text-xs text-muted">{hs.members} akun member (password berbeda dari username) dibiarkan sebagai akun tetap, tidak diimpor sebagai voucher.</p>}
             </div>
           ) : (
             <EmptyState title="Tidak ada hotspot" />
           )}
         </Card>
       </div>
+
+      <MikhmonCard routerId={routerId} onChanged={refresh} />
 
       <Card>
         <CardHeader title="Setelan router lainnya" subtitle="Dibaca langsung dari router setiap kali dibuka. Klik untuk mengatur." />
