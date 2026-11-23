@@ -21,6 +21,8 @@ interface SimState {
   logs: Item[];
   /** Akun PPPoE yang "kabelnya putus": tidak bisa menyambung sampai dipulihkan. */
   pppBlocked?: string[];
+  /** Isi berkas (base64) yang diunduh lewat /tool/fetch. */
+  fileData?: Record<string, string>;
   ifaceRate: Record<string, { rx: number; tx: number; base: number }>;
   counters: Record<string, { rx: number; tx: number }>;
   cpu: number;
@@ -187,10 +189,12 @@ function createInitialState(identity: string): SimState {
       { name: 'cctv', target: '192.168.88.10/32', 'max-limit': '5M/5M' },
     ]),
     '/queue/type': mk([{ name: 'pcq-download', kind: 'pcq', 'pcq-classifier': 'dst-address', 'pcq-rate': '0' }]),
+    '/queue/tree': mk([{ name: 'total-download', parent: 'global', 'packet-mark': 'down', 'max-limit': '100M', priority: '8' }]),
     '/ppp/profile': mk([
       { name: 'default', 'local-address': '', 'remote-address': '', 'rate-limit': '' },
       { name: 'PPPoE-10M', 'local-address': '172.16.0.1', 'remote-address': 'pppoe-pool', 'rate-limit': '10M/10M' },
       { name: 'PPPoE-20M', 'local-address': '172.16.0.1', 'remote-address': 'pppoe-pool', 'rate-limit': '20M/20M' },
+      { name: 'UP TO 50 MB', 'local-address': '172.16.0.1', 'remote-address': 'pppoe-pool', 'rate-limit': '50M/50M 0/0 0/0 8/8 8 30M/30M', 'only-one': 'default', bridge: '' },
     ]),
     '/ppp/secret': mk([
       { name: 'pelanggan01', password: 'rahasia01', service: 'pppoe', profile: 'PPPoE-10M', 'remote-address': '', comment: 'Pak Joko' },
@@ -205,7 +209,7 @@ function createInitialState(identity: string): SimState {
     '/ip/hotspot': mk([{ name: 'hotspot1', interface: 'bridge-hotspot', 'address-pool': 'hs-pool', profile: 'hsprof1', 'addresses-per-mac': '2' }]),
     '/ip/hotspot/profile': mk([
       { name: 'default', 'hotspot-address': '', 'dns-name': '', 'login-by': 'cookie,http-chap' },
-      { name: 'hsprof1', 'hotspot-address': '10.5.50.1', 'dns-name': 'hotspot.lan', 'login-by': 'cookie,http-chap,http-pap', 'html-directory': 'hotspot' },
+      { name: 'hsprof1', 'hotspot-address': '10.5.50.1', 'dns-name': 'hotspot.lan', 'login-by': 'cookie,http-chap,http-pap', 'html-directory': 'flash/hotspot' },
     ]),
     '/ip/hotspot/user/profile': mk([
       { name: 'default', 'rate-limit': '', 'shared-users': '1', 'session-timeout': '', 'keepalive-timeout': '2m', 'address-pool': 'none' },
@@ -322,6 +326,10 @@ export class SimulatedRouter extends EventEmitter implements RouterConnection {
 
   get connected() {
     return this._connected;
+  }
+
+  get localAddress() {
+    return '127.0.0.1';
   }
 
   private get s() {
@@ -459,6 +467,33 @@ export class SimulatedRouter extends EventEmitter implements RouterConnection {
       // akun contoh "offline" dibiarkan mati untuk demo; lainnya menyambung ulang dalam beberapa detik
       if (/offline/i.test(s.comment ?? '') || Math.random() > dt / 6) continue;
       this.pppConnect(s.name);
+    }
+  }
+
+  /** Tulis berkas ke penyimpanan simulasi (isi disimpan terpisah dari tabel /file). */
+  private writeFile(name: string, data: Buffer) {
+    const files = this.table('/file');
+    const type = name.endsWith('.html') ? '.html file' : name.endsWith('.js') ? '.js file' : name.split('.').pop() + ' file';
+    const existing = files.find((f) => f.name === name);
+    if (existing) existing.size = String(data.length);
+    else files.push({ '.id': this.newId(), name, type, size: String(data.length), 'creation-time': new Date().toISOString(), disabled: 'false', comment: '' });
+    (this.s.fileData ??= {})[name] = data.toString('base64');
+    this.store.dirty = true;
+  }
+
+  /** Untuk pengujian: isi berkas di router simulasi. */
+  readFile(name: string) {
+    const b = this.s.fileData?.[name];
+    return b === undefined ? undefined : Buffer.from(b, 'base64').toString('utf8');
+  }
+
+  /** Meniru RouterOS: html-directory baru yang belum ada diisi halaman bawaan. */
+  private ensureHotspotDir(dir: string) {
+    const files = this.table('/file');
+    if (!dir || files.some((f) => f.name === dir)) return;
+    files.push({ '.id': this.newId(), name: dir, type: 'directory', size: '0', 'creation-time': new Date().toISOString(), disabled: 'false', comment: '' });
+    for (const f of ['login.html', 'alogin.html', 'status.html', 'logout.html', 'error.html', 'redirect.html', 'rlogin.html', 'md5.js', 'errors.txt']) {
+      this.writeFile(`${dir}/${f}`, Buffer.from(`<!-- default ${f} -->`));
     }
   }
 
@@ -689,6 +724,25 @@ export class SimulatedRouter extends EventEmitter implements RouterConnection {
         this.log('script,info', `script ${s[0].name} executed`);
         return [];
       }
+      case '/tool/fetch': {
+        const url = String(params.url ?? '');
+        const dst = String(params['dst-path'] ?? url.split('/').pop() ?? 'download');
+        let data: Buffer;
+        try {
+          const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+          if (!res.ok) throw new RouterOSError(`failure: closing connection: <${res.status} ${res.statusText}> ${url}`);
+          data = Buffer.from(await res.arrayBuffer());
+        } catch (err) {
+          if (err instanceof RouterOSError) throw err;
+          throw new RouterOSError(`failure: connection timeout (couldn't connect)`);
+        }
+        this.writeFile(dst, data);
+        this.log('fetch,info', `Download from ${url} to ${dst} FINISHED`);
+        return [
+          { status: 'connecting' },
+          { status: 'finished', downloaded: String(Math.ceil(data.length / 1024)), total: String(Math.ceil(data.length / 1024)), duration: '1s' },
+        ];
+      }
       case '/ip/hotspot/user/reset-counters': {
         for (const u of this.findItems(this.table('/ip/hotspot/user'), String(params['.id'] ?? params.numbers ?? ''))) {
           u.uptime = '0s';
@@ -735,6 +789,7 @@ export class SimulatedRouter extends EventEmitter implements RouterConnection {
         return [{ ret: item['.id'] }];
       }
       case 'set': {
+        if (base === '/ip/hotspot/profile' && params['html-directory'] !== undefined) this.ensureHotspotDir(String(params['html-directory']));
         for (const item of this.findItems(rows, String(params['.id'] ?? params.numbers ?? ''))) {
           const oldName = item.name;
           this.applyParams(item, params);

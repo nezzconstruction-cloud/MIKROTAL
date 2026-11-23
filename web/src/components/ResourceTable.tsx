@@ -1,11 +1,12 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { Ban, CheckCircle2, Pencil, Play, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { Ban, CheckCircle2, ChevronDown, ChevronRight, Pencil, Play, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { res } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatBytes, humanDuration, parseDuration } from '../lib/format';
 import type { ColumnDef, FieldDef, ResourceDef } from '../resources';
+import { ExtraProps, PropInput, useAllProps } from './RosProperties';
 import { Badge, Button, Card, EmptyState, ErrorBox, Field, IconButton, Input, Loading, Modal, SearchInput, Select, Textarea, Toggle, useAction, useFeedback } from './ui';
 
 type Row = Record<string, string>;
@@ -93,6 +94,10 @@ export function ResourceForm({
   });
   const sources = useSourceOptions(routerId, fields, true);
   const { run, busy } = useAction();
+  const fieldNames = useMemo(() => new Set(def.fields.map((f) => f.name)), [def.fields]);
+  const adv = useAllProps(isEdit ? initial : null, fieldNames);
+  const [showAdv, setShowAdv] = useState(false);
+  const suggestions = useMemo(() => Object.keys(initial ?? {}).filter((k) => !k.startsWith('.')), [initial]);
 
   const save = async () => {
     const body: Record<string, string | boolean> = {};
@@ -110,6 +115,9 @@ export function ResourceForm({
         throw new Error(`${f.label} wajib diisi`);
       }
     }
+    // properti lanjutan (semua setelan lain dari router) ikut dikirim bila diubah
+    for (const [k, v] of Object.entries(adv.changed())) if (!(k in body)) body[k] = v;
+    if (isEdit && !Object.keys(body).length) return true;
     if (isEdit) await res.set(routerId, def.path, initial!['.id'], body);
     else await res.add(routerId, def.path, body);
     return true;
@@ -183,6 +191,28 @@ export function ResourceForm({
             )}
           </Field>
         ))}
+        <div className="border-t border-line pt-3 sm:col-span-2">
+          <button type="button" className="flex items-center gap-1.5 text-xs font-semibold text-muted hover:text-fg" onClick={() => setShowAdv((v) => !v)}>
+            {showAdv ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+            {isEdit ? `Semua properti lain dari router (${adv.keys.length})` : 'Properti tambahan'}
+          </button>
+          {showAdv && (
+            <div className="mt-3 space-y-3">
+              <p className="text-[11px] text-subtle">Nama dan nilai persis seperti di Winbox/terminal RouterOS. Hanya properti yang diubah yang dikirim ke router.</p>
+              {isEdit && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {adv.keys.map((k) => (
+                    <label key={k} className="block">
+                      <span className="mb-1 block font-mono text-[11px] text-muted">{k}</span>
+                      <PropInput name={k} value={adv.vals[k] ?? ''} original={initial?.[k]} onChange={(v) => adv.setVals((x) => ({ ...x, [k]: v }))} />
+                    </label>
+                  ))}
+                </div>
+              )}
+              <ExtraProps rows={adv.extra} onChange={adv.setExtra} suggestions={suggestions} />
+            </div>
+          )}
+        </div>
         <button type="submit" className="hidden" />
       </form>
     </Modal>

@@ -133,6 +133,11 @@ export class RouterManager {
     }
   }
 
+  /** IP server MIKROTAL sebagaimana terlihat dari router (sisi lokal koneksi API). */
+  async localAddress(id: number) {
+    return (await this.connection(id)).localAddress;
+  }
+
   isConnected(id: number) {
     return !!this.conns.get(id)?.connected;
   }

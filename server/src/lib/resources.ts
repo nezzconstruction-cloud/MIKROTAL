@@ -28,6 +28,7 @@ export const RESOURCE_RULES: Record<string, ResourceRule> = {
   '/ip/service': { group: 'config', noAdd: true, danger: true },
   '/queue/simple': { group: 'config' },
   '/queue/type': { group: 'config' },
+  '/queue/tree': { group: 'config' },
   '/ppp/secret': { group: 'config' },
   '/ppp/profile': { group: 'config' },
   '/ppp/active': { group: 'config', noAdd: true },

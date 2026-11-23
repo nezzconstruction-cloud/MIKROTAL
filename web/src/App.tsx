@@ -20,7 +20,7 @@ const VoucherGenerate = lazy(() => import('./pages/VoucherGenerate'));
 const Vouchers = lazy(() => import('./pages/Vouchers'));
 const Batches = lazy(() => import('./pages/Batches'));
 const VoucherPrint = lazy(() => import('./pages/VoucherPrint'));
-const LoginTemplate = lazy(() => import('./pages/LoginTemplate'));
+const HotspotPortal = lazy(() => import('./pages/HotspotPortal'));
 const Resellers = lazy(() => import('./pages/Resellers'));
 const MyBalance = lazy(() => import('./pages/MyBalance'));
 const Reports = lazy(() => import('./pages/Reports'));
@@ -38,6 +38,8 @@ const PppVouchers = lazy(() => import('./pages/PppVouchers'));
 const PppVoucherPrint = lazy(() => import('./pages/PppVoucherPrint'));
 const Topology = lazy(() => import('./pages/Topology'));
 const Troubleshoot = lazy(() => import('./pages/Troubleshoot'));
+const RouterMenu = lazy(() => import('./pages/RouterMenu'));
+const RouterSync = lazy(() => import('./pages/RouterSync'));
 const Isolir = lazy(() => import('./pages/Isolir'));
 
 function Guard({ perm, children }: { perm?: string; children: ReactNode }) {
@@ -97,6 +99,8 @@ export function App() {
         >
           <Route index element={<Dashboard />} />
           <Route path="routers" element={<Guard perm="router.view"><Routers /></Guard>} />
+          <Route path="sync" element={<Guard perm="config.view"><RouterSync /></Guard>} />
+          <Route path="router-menu" element={<Guard perm="config.view"><RouterMenu /></Guard>} />
           <Route path="monitor" element={<Guard perm="router.view"><Monitor /></Guard>} />
           <Route path="traffic" element={<Guard perm="router.view"><Traffic /></Guard>} />
           <Route path="logs" element={<Guard perm="router.view"><Logs /></Guard>} />
@@ -106,7 +110,8 @@ export function App() {
           <Route path="vouchers/generate" element={<Guard perm="voucher.write"><VoucherGenerate /></Guard>} />
           <Route path="vouchers" element={<Guard perm="voucher.view"><Vouchers /></Guard>} />
           <Route path="vouchers/batches" element={<Guard perm="voucher.view"><Batches /></Guard>} />
-          <Route path="vouchers/template" element={<Guard perm="hotspot.write"><LoginTemplate /></Guard>} />
+          <Route path="hotspot/portal" element={<Guard perm="hotspot.view"><HotspotPortal /></Guard>} />
+          <Route path="vouchers/template" element={<Navigate to="/hotspot/portal" replace />} />
           <Route path="customers" element={<Guard perm="customer.view"><Customers /></Guard>} />
           <Route path="pppoe/vouchers" element={<Guard perm="voucher.view"><PppVouchers /></Guard>} />
           <Route path="pppoe/packages" element={<Guard perm="customer.view"><PppPackages /></Guard>} />
