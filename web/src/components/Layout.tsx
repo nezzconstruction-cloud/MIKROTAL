@@ -84,6 +84,7 @@ const NAV: NavGroup[] = [
     perm: 'hotspot.view',
     items: [
       { to: '/hotspot/active', label: 'Sesi Aktif' },
+      { to: '/hotspot/portal', label: 'Portal Login' },
       { to: '/hotspot/profiles', label: 'Profil & Harga' },
       r('hotspot-users', 'Pengguna Hotspot'),
       r('hotspot-hosts', 'Host'),
@@ -104,7 +105,6 @@ const NAV: NavGroup[] = [
       { to: '/vouchers/generate', label: 'Buat Voucher', perm: 'voucher.write' },
       { to: '/vouchers', label: 'Daftar Voucher' },
       { to: '/vouchers/batches', label: 'Batch & Cetak' },
-      { to: '/vouchers/template', label: 'Template Login', perm: 'hotspot.write' },
     ],
   },
   {

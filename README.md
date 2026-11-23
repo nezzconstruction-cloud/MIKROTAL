@@ -19,6 +19,7 @@
 | Menagih tanpa repot | Voucher isi ulang masa aktif, isolir otomatis saat habis, halaman isi ulang untuk pelanggan |
 | Mencari kabel putus | Peta jalur server → ODC → ODP → rumah dan scan yang menunjuk segmen yang diduga putus |
 | Menjual voucher hotspot | Generate massal, cetak dengan QR, reseller bersaldo, laporan penjualan |
+| Halaman login hotspot | Editor portal login dengan pratinjau langsung, dipasang ke router dengan satu tombol |
 | Mengatur router | 40+ menu RouterOS (firewall, queue, DHCP, PPP, dll) tanpa Winbox |
 
 | Pelanggan PPPoE | Topologi ODC / ODP |
@@ -28,6 +29,10 @@
 | Troubleshoot jalur kabel | Halaman isi ulang pelanggan |
 |---|---|
 | ![Troubleshoot](docs/screenshots/troubleshoot.png) | <img src="docs/screenshots/isi-ulang.png" alt="Isi ulang" width="260"> |
+
+| Editor portal login hotspot | Portal di HP pelanggan |
+|---|---|
+| ![Editor portal](docs/screenshots/portal-editor.png) | <img src="docs/screenshots/portal-login.png" alt="Portal login" width="260"> |
 
 ## Cara install
 
@@ -85,7 +90,7 @@ Setelah terpasang, lanjutkan ke [Menghubungkan MikroTik asli](#menghubungkan-mik
 - Sesi aktif live: putus pengguna, lihat sisa masa aktif voucher, pemakaian data.
 - **Profil & Harga**: rate limit, shared users, timeout, plus harga jual, harga reseller, masa aktif, batas waktu, batas kuota, dan warna label.
 - Pengguna hotspot, Host, IP Binding (bypass/blokir), Walled Garden, Server & Profil Server, Cookie.
-- **Generator halaman login captive portal** (login.html) yang modern: daftar harga, tombol WhatsApp, mode voucher 1 kolom, dan kompatibel CHAP.
+- **Portal login hotspot**: editor dengan pratinjau langsung (HP, tablet, desktop) untuk halaman login, berhasil login, status, keluar, dan kendala. 5 gaya, warna, logo, foto latar, login voucher/member, pindai QR, trial, daftar harga dengan tombol beli WhatsApp, promo, pengumuman, FAQ, ketentuan, kontak, dan dua bahasa. Dipasang ke router dengan satu tombol, atau diunduh sebagai ZIP.
 
 ### Voucher & bisnis
 - **Generate massal** (sampai 1000 per batch): prefix, panjang kode, jenis karakter tanpa huruf membingungkan (0/O, 1/I), username = password atau terpisah.
@@ -209,6 +214,21 @@ Di **Pengaturan → PPPoE & isolir**, isi **IP server MIKROTAL** (alamat yang bi
 Semua aturan diberi komentar `MIKROTAL-ISOLIR` dan tidak digandakan bila tombol ditekan lagi. Permintaan dari IP pool isolir otomatis diarahkan MIKROTAL ke halaman `/isolir` (form isi voucher), sehingga MIKROTAL harus melihat IP asli pelanggan: jangan lewatkan trafik isolir melalui masquerade, dan bila memakai reverse proxy pastikan header `X-Forwarded-For` diteruskan. Situs HTTPS tidak bisa dialihkan; pelanggan perlu membuka situs HTTP apa pun atau alamat `/isi` secara langsung.
 
 > Aplikasi menjadi acuan status akun: bila profil atau status disabled sebuah akun pelanggan diubah langsung di Winbox, sinkronisasi berikutnya mengembalikannya sesuai data di MIKROTAL.
+
+## Portal login hotspot
+
+Menu **Hotspot → Portal Login** berisi editor halaman login hotspot dengan pratinjau langsung. Tombol **Pasang ke router** memasangnya tanpa Winbox:
+
+1. Profil server hotspot yang dipilih diarahkan ke folder baru di samping folder lama (misalnya `flash/hotspot` → `flash/mikrotal-portal`). Router mengisi folder baru itu dengan halaman bawaannya.
+2. Router mengunduh halaman portal dari server MIKROTAL dengan `/tool fetch` (tautan sekali pakai, berlaku 10 menit).
+3. Ukuran tiap berkas di router diperiksa. Bila ada yang gagal, profil otomatis dikembalikan ke folder lama.
+4. Bila tombol cek voucher atau isi ulang PPPoE aktif, IP server MIKROTAL ditambahkan ke walled garden. WhatsApp hanya ditambahkan bila dicentang.
+
+Folder lama tidak pernah diubah; tombol **Kembalikan halaman lama** mengarahkan profil kembali ke sana. Syaratnya, router harus bisa menjangkau alamat server MIKROTAL (IP LAN komputer dan port-nya). Untuk pemasangan manual, unduh ZIP berisi semua berkas dan petunjuknya.
+
+Login CHAP dihitung langsung di `login.html` (tidak butuh `md5.js`). QR yang dicetak MIKROTAL pada voucher langsung login otomatis saat dipindai.
+
+> Pemasangan sudah diuji terhadap router simulasi dan halaman diuji di browser dengan server hotspot tiruan, tetapi belum di MikroTik fisik. Coba dulu di satu profil hotspot sebelum dipakai semua pelanggan.
 
 ## Peran pengguna
 

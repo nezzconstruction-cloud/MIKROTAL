@@ -21,6 +21,8 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** Isi respons error dari server (mis. langkah yang sudah dijalankan). */
+    public data?: any,
   ) {
     super(message);
   }
@@ -66,7 +68,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   if (!res.ok) {
     if (res.status === 401 && token) onUnauthorized?.();
     const message = typeof data === 'object' && data && 'error' in data ? String((data as any).error) : `Permintaan gagal (${res.status})`;
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, data);
   }
   return data as T;
 }
