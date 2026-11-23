@@ -1,6 +1,7 @@
 import type { DB } from '../db/index.js';
 import { RouterOSClient } from '../lib/routeros/client.js';
 import { SimulatedRouter } from '../lib/routeros/simulator.js';
+import { ftpUpload } from '../lib/ftp.js';
 import { ConnectionError, type RosParams, type RosRow, type RouterConnection } from '../lib/routeros/types.js';
 import type { SecretBox } from '../lib/security.js';
 
@@ -136,6 +137,13 @@ export class RouterManager {
   /** IP server MIKROTAL sebagaimana terlihat dari router (sisi lokal koneksi API). */
   async localAddress(id: number) {
     return (await this.connection(id)).localAddress;
+  }
+
+  /** Unggah berkas ke router lewat FTP memakai akun yang sama dengan API. */
+  async uploadFiles(id: number, port: number, files: { path: string; data: Buffer }[]) {
+    const r = this.require(id);
+    if (r.simulate) return ((await this.connection(id)) as SimulatedRouter).ftpPut(files, port);
+    return ftpUpload({ host: r.host, port, user: r.username, password: this.box.decrypt(r.password_enc), timeoutMs: 15000 }, files);
   }
 
   isConnected(id: number) {

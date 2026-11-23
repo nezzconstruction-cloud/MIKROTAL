@@ -481,6 +481,19 @@ export class SimulatedRouter extends EventEmitter implements RouterConnection {
     this.store.dirty = true;
   }
 
+  /** Alamat TEST-NET (192.0.2.0/24) dianggap tidak terjangkau dari router simulasi. */
+  static unreachable(host: string) {
+    return host.startsWith('192.0.2.');
+  }
+
+  /** Meniru unggah FTP ke router: ditolak bila layanan ftp nonaktif atau port beda. */
+  async ftpPut(files: { path: string; data: Buffer }[], port: number) {
+    const svc = this.table('/ip/service').find((x) => x.name === 'ftp');
+    if (!svc || svc.disabled === 'true' || Number(svc.port) !== port) throw new Error(`FTP 127.0.0.1:${port} menolak koneksi (layanan ftp mati atau dibatasi address)`);
+    for (const f of files) this.writeFile(f.path, f.data);
+    this.log('system,info,account', `user ${this.opts.username ?? 'admin'} logged in via ftp`);
+  }
+
   /** Untuk pengujian: isi berkas di router simulasi. */
   readFile(name: string) {
     const b = this.s.fileData?.[name];
@@ -708,6 +721,9 @@ export class SimulatedRouter extends EventEmitter implements RouterConnection {
         const count = Math.min(Number(params.count ?? 4), 20);
         const host = String(params.address ?? '');
         if (!host) throw new RouterOSError('missing value for address');
+        if (SimulatedRouter.unreachable(host)) {
+          return Array.from({ length: count }, (_, i) => ({ seq: String(i), host, status: 'no route to host', sent: String(i + 1), received: '0', 'packet-loss': '100' }));
+        }
         return Array.from({ length: count }, (_, i) => ({
           seq: String(i),
           host,
@@ -728,6 +744,7 @@ export class SimulatedRouter extends EventEmitter implements RouterConnection {
         const url = String(params.url ?? '');
         const dst = String(params['dst-path'] ?? url.split('/').pop() ?? 'download');
         let data: Buffer;
+        if (SimulatedRouter.unreachable(new URL(url).hostname)) throw new RouterOSError('failure: Host is unreachable');
         try {
           const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
           if (!res.ok) throw new RouterOSError(`failure: closing connection: <${res.status} ${res.statusText}> ${url}`);
