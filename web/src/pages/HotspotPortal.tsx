@@ -284,6 +284,7 @@ function InstallPanel({ routerId, data, config, dirty, onInstalled }: { routerId
   const [profile, setProfile] = useState(defProfile);
   const [baseUrl, setBaseUrl] = useState(data.install?.baseUrl ?? data.baseUrl);
   const [allowWa, setAllowWa] = useState(false);
+  const [method, setMethod] = useState<'auto' | 'fetch' | 'ftp'>('auto');
   const [result, setResult] = useState<{ ok: boolean; steps: string[]; warnings?: string[]; message?: string } | null>(null);
   const prof = hs?.profiles.find((p) => p.name === profile);
   const usedBy = hs?.servers.filter((s) => s.profile === profile).map((s) => s.name) ?? [];
@@ -293,14 +294,14 @@ function InstallPanel({ routerId, data, config, dirty, onInstalled }: { routerId
     if (
       !(await confirm({
         title: `Pasang portal ke profil ${profile}?`,
-        message: `Router akan mengunduh ${data.install ? 'ulang ' : ''}halaman portal dari ${baseUrl} ke folder baru, lalu profil ${profile} diarahkan ke folder itu. Folder halaman lama (${prof?.htmlDirectory || 'hotspot'}) tidak diubah dan bisa dipakai kembali kapan saja.${usedBy.length ? ` Server hotspot yang memakai profil ini: ${usedBy.join(', ')}.` : ''}`,
+        message: `Halaman portal dikirim ${method === 'ftp' ? 'lewat FTP' : method === 'fetch' ? `dengan router mengunduh dari ${baseUrl}` : `(router mengunduh dari ${baseUrl}, bila gagal lewat FTP)`} ke folder baru, lalu profil ${profile} diarahkan ke folder itu. Folder halaman lama (${prof?.htmlDirectory || 'hotspot'}) tidak diubah dan bisa dipakai kembali kapan saja.${usedBy.length ? ` Server hotspot yang memakai profil ini: ${usedBy.join(', ')}.` : ''}`,
         confirmText: 'Pasang sekarang',
       }))
     )
       return;
     setResult(null);
     try {
-      const r = await post<InstallResult>(`/api/routers/${routerId}/portal/install`, { config, profile, baseUrl, allowWhatsapp: allowWa });
+      const r = await post<InstallResult>(`/api/routers/${routerId}/portal/install`, { config, profile, baseUrl, allowWhatsapp: allowWa, method });
       setResult({ ok: true, steps: r.steps, warnings: r.warnings });
       toast('success', 'Portal terpasang', `Halaman login baru aktif di ${r.dir}.`);
       onInstalled();
@@ -351,8 +352,26 @@ function InstallPanel({ routerId, data, config, dirty, onInstalled }: { routerId
               ))}
             </Select>
           </Field>
-          <Field label="Alamat server MIKROTAL" hint="Dipakai router untuk mengunduh halaman, dan oleh pelanggan untuk membuka halaman cek voucher. Biasanya IP LAN komputer MIKROTAL beserta port-nya.">
+          <Field label="Alamat server MIKROTAL" hint="Alamat komputer MIKROTAL dari sisi router: dipakai router untuk mengunduh halaman dan oleh pelanggan untuk membuka halaman cek voucher.">
             <Input className="font-mono" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="http://192.168.88.10:8080" />
+          </Field>
+          <Field label="Cara mengirim berkas ke router">
+            <Seg
+              value={method}
+              onChange={setMethod}
+              items={[
+                { value: 'auto', label: 'Otomatis' },
+                { value: 'fetch', label: 'Router mengunduh' },
+                { value: 'ftp', label: 'Unggah FTP' },
+              ]}
+            />
+            <span className="mt-1 block text-[11px] text-subtle">
+              {method === 'fetch'
+                ? 'Router mengunduh dari alamat di atas. Router harus bisa menjangkau komputer MIKROTAL.'
+                : method === 'ftp'
+                  ? 'MIKROTAL mengirim berkas ke router lewat FTP, arah koneksinya sama seperti API. Cocok bila komputer MIKROTAL di belakang router/ONT lain. Layanan "ftp" di router harus aktif.'
+                  : 'Coba router mengunduh dulu; bila router tidak bisa menjangkau komputer MIKROTAL, otomatis beralih ke unggah FTP (layanan "ftp" di router harus aktif).'}
+            </span>
           </Field>
           <div className="space-y-2">
             <Toggle checked={allowWa} onChange={setAllowWa} label="Izinkan WhatsApp sebelum login" />
@@ -364,7 +383,11 @@ function InstallPanel({ routerId, data, config, dirty, onInstalled }: { routerId
             <p className="mb-1 font-semibold text-fg">Yang terjadi saat dipasang</p>
             <ol className="list-decimal space-y-0.5 pl-4">
               <li>Profil {profile || '…'} diarahkan ke folder baru <span className="font-mono">{prof ? (prof.htmlDirectory.includes('/') ? prof.htmlDirectory.slice(0, prof.htmlDirectory.lastIndexOf('/') + 1) : '') + 'mikrotal-portal' : 'mikrotal-portal'}</span>. Folder lama tidak diubah.</li>
-              <li>Router mengunduh {config.background ? '6' : '5'} berkas dari server MIKROTAL dengan /tool fetch.</li>
+              <li>
+                {method === 'ftp'
+                  ? `MIKROTAL mengunggah ${config.background ? '6' : '5'} berkas ke router lewat FTP.`
+                  : `Router mengunduh ${config.background ? '6' : '5'} berkas dari server MIKROTAL dengan /tool fetch${method === 'auto' ? '; bila gagal, MIKROTAL mengunggahnya lewat FTP' : ''}.`}
+              </li>
               <li>Ukuran berkas di router diperiksa. Bila gagal, profil otomatis dikembalikan ke folder lama.</li>
               {(config.cekVoucher || config.pppoeTopup) && <li>IP server MIKROTAL ditambahkan ke walled garden agar halaman cek voucher bisa dibuka sebelum login.</li>}
             </ol>

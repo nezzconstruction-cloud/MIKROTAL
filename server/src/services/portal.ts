@@ -28,6 +28,8 @@ export interface InstallOptions {
   profile: string;
   baseUrl: string;
   allowWhatsapp: boolean;
+  /** fetch: router mengunduh dari MIKROTAL; ftp: MIKROTAL mengunggah ke router; auto: coba fetch lalu FTP. */
+  method?: 'auto' | 'fetch' | 'ftp';
 }
 
 /** Folder portal: di samping folder hotspot yang sekarang dipakai, mis. flash/hotspot → flash/mikrotal-portal. */
@@ -166,17 +168,42 @@ export class PortalService {
         switched = true;
         steps.push(`Profil ${opts.profile}: folder halaman ${current} → ${target}`);
       }
-      for (const f of files) {
+      const method = opts.method ?? 'auto';
+      let fetchError: string | null = null;
+      if (method !== 'ftp') {
         try {
-          await this.routers.exec(routerId, '/tool/fetch', { url: `${baseUrl}/api/portal-files/${token}/${f.name}`, 'dst-path': `${dstDir}/${f.name}`, mode: 'http' });
+          for (const f of files) {
+            try {
+              await this.routers.exec(routerId, '/tool/fetch', { url: `${baseUrl}/api/portal-files/${token}/${f.name}`, 'dst-path': `${dstDir}/${f.name}`, mode: 'http' });
+            } catch (err) {
+              throw new Error(`Router gagal mengunduh ${f.name} dari ${baseUrl}: ${(err as Error).message}`);
+            }
+          }
+          steps.push(`${files.length} berkas diunduh router dari ${baseUrl} ke ${dstDir}`);
         } catch (err) {
-          throw new HttpError(
-            502,
-            `Router gagal mengunduh ${f.name} dari ${baseUrl}: ${(err as Error).message}. Pastikan ${router.name} bisa menjangkau alamat itu (IP komputer MIKROTAL dan port-nya), dan firewall komputer mengizinkan port tersebut.`,
-          );
+          fetchError = (err as Error).message;
+          steps.push(fetchError);
+          steps.push(...(await this.diagnoseReach(routerId, host)));
+          if (method === 'fetch') {
+            throw new HttpError(502, `${fetchError}. Pilih cara pasang "Unggah lewat FTP", atau pastikan ${router.name} bisa menjangkau ${host}.`);
+          }
         }
       }
-      steps.push(`${files.length} berkas diunduh router ke ${dstDir}`);
+      if (method === 'ftp' || fetchError) {
+        const svc = (await this.routers.exec(routerId, '/ip/service/print', { '.proplist': 'name,port,disabled,address' })).find((x) => x.name === 'ftp');
+        if (!svc || svc.disabled === 'true') {
+          throw new HttpError(
+            502,
+            `${fetchError ? 'Router tidak bisa mengunduh dari MIKROTAL, dan ' : ''}layanan FTP di ${router.name} nonaktif. Aktifkan "ftp" di Semua Menu Router → IP service (isi address dengan IP komputer MIKROTAL agar aman), lalu pasang lagi.`,
+          );
+        }
+        try {
+          await this.routers.uploadFiles(routerId, Number(svc.port) || 21, files.map((f) => ({ path: `${dstDir}/${f.name}`, data: f.data })));
+        } catch (err) {
+          throw new HttpError(502, `Unggah lewat FTP ke ${router.name} gagal: ${(err as Error).message}`);
+        }
+        steps.push(`${files.length} berkas diunggah MIKROTAL ke ${dstDir} lewat FTP (port ${svc.port || 21})`);
+      }
 
       const onRouter = await this.routers.exec(routerId, '/file/print', { '.proplist': 'name,size' });
       const byName = new Map<string, RosRow>(onRouter.map((r) => [r.name.replace(/^\/+/, ''), r]));
@@ -231,6 +258,28 @@ export class PortalService {
       routerId,
     ]);
     return { dir: target, previousDir: previous, files: files.map((f) => ({ name: f.name, size: f.data.length })), steps, warnings };
+  }
+
+  /** Penjelasan kenapa router tidak menjangkau server MIKROTAL: hasil ping dan alamat IP router. */
+  async diagnoseReach(routerId: number, host: string) {
+    const out: string[] = [];
+    try {
+      const ping = await this.routers.exec(routerId, '/ping', { address: host, count: '2' });
+      const ok = ping.some((p) => Number(p.received ?? 0) > 0 && !p.status);
+      out.push(ok ? `Diagnosis: router bisa ping ${host}, jadi kemungkinan port web MIKROTAL diblokir firewall komputer.` : `Diagnosis: router tidak bisa ping ${host} (${ping.find((p) => p.status)?.status ?? 'tidak ada balasan'}).`);
+    } catch (err) {
+      out.push(`Diagnosis: ping dari router gagal (${(err as Error).message}).`);
+    }
+    try {
+      const addrs = await this.routers.exec(routerId, '/ip/address/print', { '.proplist': 'address,interface,disabled' });
+      const list = addrs.filter((a) => a.disabled !== 'true').map((a) => `${a.address} (${a.interface})`);
+      if (list.length) out.push(`Alamat IP di router: ${list.slice(0, 8).join(', ')}${list.length > 8 ? ', ...' : ''}.`);
+    } catch {
+      /* abaikan */
+    }
+    const local = await this.routers.localAddress(routerId).catch(() => undefined);
+    if (local && local !== host) out.push(`MIKROTAL tersambung ke router dari IP ${local}, berbeda dengan ${host}. Bila komputer MIKROTAL di belakang router/ONT lain (NAT), router tidak bisa menghubunginya: pakai cara pasang lewat FTP.`);
+    return out;
   }
 
   /** Kembalikan profil hotspot ke folder halaman sebelum MIKROTAL dipasang. Berkas portal tetap disimpan. */

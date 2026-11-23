@@ -232,7 +232,15 @@ Menu **Hotspot → Portal Login** berisi editor halaman login hotspot dengan pra
 3. Ukuran tiap berkas di router diperiksa. Bila ada yang gagal, profil otomatis dikembalikan ke folder lama.
 4. Bila tombol cek voucher atau isi ulang PPPoE aktif, IP server MIKROTAL ditambahkan ke walled garden. WhatsApp hanya ditambahkan bila dicentang.
 
-Folder lama tidak pernah diubah; tombol **Kembalikan halaman lama** mengarahkan profil kembali ke sana. Syaratnya, router harus bisa menjangkau alamat server MIKROTAL (IP LAN komputer dan port-nya). Untuk pemasangan manual, unduh ZIP berisi semua berkas dan petunjuknya.
+Folder lama tidak pernah diubah; tombol **Kembalikan halaman lama** mengarahkan profil kembali ke sana. Untuk pemasangan manual, unduh ZIP berisi semua berkas dan petunjuknya.
+
+Cara mengirim berkas ke router (tab **Pasang**):
+
+- **Otomatis** (bawaan): router mengunduh dari MIKROTAL; bila router tidak bisa menjangkau komputer MIKROTAL, beralih ke unggah FTP.
+- **Router mengunduh**: router harus bisa menjangkau alamat server MIKROTAL (IP komputer dan port-nya).
+- **Unggah FTP**: MIKROTAL mengirim berkas ke router dengan akun yang sama seperti API. Cocok bila komputer MIKROTAL berada di belakang router/ONT lain (NAT). Layanan `ftp` di router harus aktif; batasi `address`-nya ke IP komputer MIKROTAL.
+
+Bila gagal, MIKROTAL menampilkan diagnosis: hasil ping dari router ke alamat MIKROTAL, alamat IP yang dimiliki router, dan IP yang dipakai MIKROTAL saat tersambung ke router.
 
 Login CHAP dihitung langsung di `login.html` (tidak butuh `md5.js`). QR yang dicetak MIKROTAL pada voucher langsung login otomatis saat dipindai.
 

@@ -152,11 +152,32 @@ test('portal: pasang ke router, pasang ulang, gagal aman, kembalikan', async () 
   assert.equal((await profile())['html-directory'], 'flash/hotspot');
 
   // router tidak bisa menjangkau alamat → dibatalkan, folder lama dipakai lagi
-  const fail = await api('POST', `/api/routers/${routerId}/portal/install`, { profile: 'hsprof1', baseUrl: 'http://127.0.0.1:1' });
+  const fail = await api('POST', `/api/routers/${routerId}/portal/install`, { profile: 'hsprof1', baseUrl: 'http://127.0.0.1:1', method: 'fetch' });
   assert.equal(fail.status, 502, JSON.stringify(fail.body));
   assert.match(fail.body.error, /gagal mengunduh login\.html/);
   assert.ok(fail.body.steps.some((s: string) => /dikembalikan ke flash\/hotspot/.test(s)));
   assert.equal((await profile())['html-directory'], 'flash/hotspot');
+
+  // komputer MIKROTAL di belakang NAT: fetch gagal, diagnosis dijalankan, FTP masih mati → batal dengan petunjuk
+  const nat = await api('POST', `/api/routers/${routerId}/portal/install`, { profile: 'hsprof1', baseUrl: 'http://192.0.2.20:8080' });
+  assert.equal(nat.status, 502, JSON.stringify(nat.body));
+  assert.match(nat.body.error, /layanan FTP .* nonaktif/);
+  assert.ok(nat.body.steps.some((s: string) => /Host is unreachable/.test(s)));
+  assert.ok(nat.body.steps.some((s: string) => /tidak bisa ping 192\.0\.2\.20/.test(s)));
+  assert.ok(nat.body.steps.some((s: string) => /Alamat IP di router: .*ether/.test(s)));
+  assert.ok(nat.body.steps.some((s: string) => /tersambung ke router dari IP 127\.0\.0\.1/.test(s)));
+  assert.equal((await profile())['html-directory'], 'flash/hotspot');
+
+  // setelah FTP diaktifkan, cara otomatis beralih ke unggah FTP
+  const ftp = (await api('GET', `/api/routers/${routerId}/res?path=/ip/service`)).body.find((r: any) => r.name === 'ftp');
+  await api('POST', `/api/routers/${routerId}/ros/action`, { path: '/ip/service', ids: [ftp['.id']], action: 'enable' });
+  const viaFtp = await api('POST', `/api/routers/${routerId}/portal/install`, { profile: 'hsprof1', baseUrl: 'http://192.0.2.20:8080' });
+  assert.equal(viaFtp.status, 200, JSON.stringify(viaFtp.body));
+  assert.ok(viaFtp.body.steps.some((s: string) => /lewat FTP \(port 21\)/.test(s)));
+  assert.match(conn.readFile('flash/mikrotal-portal/login.html')!, /<!DOCTYPE html>/);
+  assert.equal((await profile())['html-directory'], 'flash/mikrotal-portal');
+  await api('POST', `/api/routers/${routerId}/portal/rollback`);
+  await api('POST', `/api/routers/${routerId}/ros/action`, { path: '/ip/service', ids: [ftp['.id']], action: 'disable' });
 
   const ok = await api('POST', `/api/routers/${routerId}/portal/install`, { profile: 'hsprof1', baseUrl: base, allowWhatsapp: true });
   assert.equal(ok.status, 200, JSON.stringify(ok.body));
@@ -183,7 +204,7 @@ test('portal: pasang ke router, pasang ulang, gagal aman, kembalikan', async () 
   assert.equal(again.status, 200, JSON.stringify(again.body));
   assert.equal(again.body.previousDir, 'flash/hotspot');
   assert.match(conn.readFile('flash/mikrotal-portal/login.html')!, /Desain kedua/);
-  assert.equal((await api('GET', `/api/routers/${routerId}/res?path=/ip/hotspot/walled-garden/ip`)).body.filter((r: any) => r.comment === 'MIKROTAL-PORTAL').length, 1);
+  assert.equal((await api('GET', `/api/routers/${routerId}/res?path=/ip/hotspot/walled-garden/ip`)).body.filter((r: any) => r.comment === 'MIKROTAL-PORTAL' && r['dst-address'] === '127.0.0.1').length, 1);
 
   const state = (await api('GET', `/api/routers/${routerId}/portal`)).body.install;
   assert.equal(state.dir, 'flash/mikrotal-portal');

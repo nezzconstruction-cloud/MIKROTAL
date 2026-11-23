@@ -73,12 +73,12 @@ export async function portalRoutes(app: FastifyInstance, ctx: AppContext) {
   app.post('/api/routers/:id/portal/install', { preHandler: auth('hotspot.write') }, async (req, reply) => {
     const id = rid((req.params as any).id);
     const b = z
-      .object({ config: z.unknown().optional(), profile: z.string().trim().min(1, 'Pilih profil hotspot'), baseUrl: z.string().trim().min(1, 'Isi alamat server MIKROTAL'), allowWhatsapp: z.boolean().default(false) })
+      .object({ config: z.unknown().optional(), profile: z.string().trim().min(1, 'Pilih profil hotspot'), baseUrl: z.string().trim().min(1, 'Isi alamat server MIKROTAL'), allowWhatsapp: z.boolean().default(false), method: z.enum(['auto', 'fetch', 'ftp']).default('auto') })
       .parse(req.body ?? {});
     if (b.config !== undefined) ctx.portal.save(id, parseConfig(b.config));
     try {
-      const r = await ctx.portal.install(id, { profile: b.profile, baseUrl: b.baseUrl, allowWhatsapp: b.allowWhatsapp }, req.user.username);
-      auditFrom(ctx, req, 'portal.install', String(id), { profile: b.profile, dir: r.dir });
+      const r = await ctx.portal.install(id, { profile: b.profile, baseUrl: b.baseUrl, allowWhatsapp: b.allowWhatsapp, method: b.method }, req.user.username);
+      auditFrom(ctx, req, 'portal.install', String(id), { profile: b.profile, dir: r.dir, method: b.method });
       return r;
     } catch (err) {
       if (err instanceof HttpError && (err as any).steps) return reply.status(err.statusCode).send({ error: err.message, steps: (err as any).steps });
