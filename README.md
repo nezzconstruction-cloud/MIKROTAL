@@ -94,11 +94,12 @@ Setelah terpasang, lanjutkan ke [Menghubungkan MikroTik asli](#menghubungkan-mik
 - **Portal login hotspot**: editor dengan pratinjau langsung (HP, tablet, desktop) untuk halaman login, berhasil login, status, keluar, dan kendala. 5 gaya, warna, logo, foto latar, login voucher/member, pindai QR, trial, daftar harga dengan tombol beli WhatsApp, promo, pengumuman, FAQ, ketentuan, kontak, dan dua bahasa. Dipasang ke router dengan satu tombol, atau diunduh sebagai ZIP.
 
 ### Voucher & bisnis
+- **Kunci MAC** per profil: voucher terkunci ke perangkat pertama yang login.
 - **Generate massal** (sampai 1000 per batch): prefix, panjang kode, jenis karakter tanpa huruf membingungkan (0/O, 1/I), username = password atau terpisah.
 - **Cetak** dengan 3 template: kartu A4 dengan **QR login otomatis**, ringkas hemat kertas, dan struk **thermal 58mm**. Bisa disimpan sebagai PDF.
 - **Sinkronisasi otomatis** dengan router. MIKROTAL mendeteksi kapan voucher pertama kali dipakai, menghitung masa aktif sejak login pertama, lalu menghapus atau menonaktifkan voucher yang kedaluwarsa (waktu/kuota/masa aktif habis).
-- **Pindah dari Mikhmon** (Sinkronisasi Router): voucher Mikhmon diimpor beserta tanggal habisnya (format lama maupun RouterOS 7.10+), harga dan masa aktif diambil dari data profil Mikhmon, lalu script on-login dan scheduler Mikhmon dinonaktifkan dengan cadangan yang bisa dikembalikan. Akun member tidak disentuh.
-- **Tahan reboot/update RouterOS**: counter voucher yang tereset dijumlahkan, dan voucher tidak ditandai hilang bila daftar user di router sesaat kosong.
+- **Pindah dari Mikhmon** (Sinkronisasi Router): voucher Mikhmon diimpor beserta tanggal habisnya (format lama maupun RouterOS 7.10+), harga dan masa aktif diambil dari data profil Mikhmon, lalu script on-login dan scheduler Mikhmon dinonaktifkan dengan cadangan yang bisa dikembalikan. Voucher yang tanggalnya sudah lewat hanya dinonaktifkan, tidak dihapus. Kunci MAC (Lock User) Mikhmon diteruskan oleh MIKROTAL. Akun member tidak disentuh.
+- **Tahan reboot/update RouterOS**: counter voucher yang tereset dijumlahkan, dan voucher tidak ditandai hilang bila daftar user di router sesaat kosong (ditunda paling lama 15 menit).
 - **Reseller dengan sistem saldo**: top up, potong saldo otomatis saat generate, refund voucher yang belum terpakai, riwayat transaksi, dan akun login khusus reseller.
 - **Laporan penjualan**: harian, per profil, per reseller, per router, stok voucher, dan ekspor CSV.
 - Halaman publik **/cek** untuk pelanggan memeriksa status dan sisa masa aktif voucher.

@@ -27,6 +27,8 @@ const profileSchema = z.object({
   validity: durationField,
   time_limit: durationField,
   data_limit: z.union([z.string(), z.number()]).default(0),
+  /** Kunci voucher ke perangkat pertama yang login. Tidak dikirim = setelan lama dipertahankan. */
+  lock_mac: z.boolean().optional(),
   color: z.string().trim().max(16).default(''),
 });
 
@@ -66,6 +68,7 @@ export async function hotspotRoutes(app: FastifyInstance, ctx: AppContext) {
           time_limit: m?.time_limit ?? '',
           data_limit: m?.data_limit ?? 0,
           color: m?.color ?? '',
+          lock_mac: !!m?.lock_mac,
         },
         users: userCount.get(p.name) ?? 0,
         stock: stock.get(p.name) ?? 0,
@@ -74,11 +77,12 @@ export async function hotspotRoutes(app: FastifyInstance, ctx: AppContext) {
   });
 
   const saveMeta = (routerId: number, b: z.infer<typeof profileSchema>) => {
+    const lockMac = b.lock_mac === undefined ? null : b.lock_mac ? 1 : 0;
     ctx.db.run(
-      `INSERT INTO profile_meta (router_id, profile, price, reseller_price, validity, time_limit, data_limit, color) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO profile_meta (router_id, profile, price, reseller_price, validity, time_limit, data_limit, color, lock_mac) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0))
        ON CONFLICT(router_id, profile) DO UPDATE SET price = excluded.price, reseller_price = excluded.reseller_price, validity = excluded.validity,
-       time_limit = excluded.time_limit, data_limit = excluded.data_limit, color = excluded.color`,
-      [routerId, b.name, b.price, b.reseller_price, b.validity, b.time_limit, parseBytes(b.data_limit), b.color],
+       time_limit = excluded.time_limit, data_limit = excluded.data_limit, color = excluded.color, lock_mac = COALESCE(?, lock_mac)`,
+      [routerId, b.name, b.price, b.reseller_price, b.validity, b.time_limit, parseBytes(b.data_limit), b.color, lockMac, lockMac],
     );
   };
 

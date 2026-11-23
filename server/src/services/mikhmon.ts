@@ -64,6 +64,7 @@ export class MikhmonService {
         badComment,
       },
       takenOver: backups.length > 0,
+      autoRemoveExpired: this.settings.get().voucher.autoRemoveExpired,
       backups: backups.map((b) => ({ kind: b.kind, name: b.name, at: b.created_at })),
     };
   }
@@ -77,8 +78,20 @@ export class MikhmonService {
     const steps: string[] = [
       `${imported.imported} voucher Mikhmon diimpor (${imported.withExpiry} dengan tanggal habis dari Mikhmon, ${imported.restarted} terpakai tanpa tanggal terbaca → masa aktif dihitung mulai sekarang)`,
     ];
+    if (imported.expiredDisabled)
+      steps.push(`${imported.expiredDisabled} voucher yang tanggal habisnya sudah lewat hanya dinonaktifkan, tidak dihapus. Periksa dulu di daftar voucher sebelum menghapusnya`);
     if (imported.metaFilled) steps.push(`${imported.metaFilled} profil diberi harga & masa aktif dari data Mikhmon`);
     if (!opts.disableScripts) return { steps, imported };
+
+    // Fitur "Lock User" Mikhmon ada di script on-login yang akan dikosongkan: MIKROTAL yang mengunci MAC
+    const locked = info.profiles.filter((p) => /^enable/i.test(p.lockUser));
+    for (const p of locked) {
+      this.db.run(
+        `INSERT INTO profile_meta (router_id, profile, price, reseller_price, validity, lock_mac) VALUES (?, ?, ?, ?, ?, 1)
+         ON CONFLICT(router_id, profile) DO UPDATE SET lock_mac = 1`,
+        [routerId, p.name, p.price, p.resellerPrice, p.validity],
+      );
+    }
 
     const now = new Date().toISOString();
     const save = (kind: 'profile' | 'scheduler', name: string, value: string) =>
@@ -104,7 +117,12 @@ export class MikhmonService {
       disabled++;
     }
     steps.push(`Script on-login Mikhmon dikosongkan di ${cleared} profil dan ${disabled} scheduler dinonaktifkan (cadangan disimpan di MIKROTAL)`);
-    steps.push('Masa aktif dan penghapusan voucher kini diatur MIKROTAL');
+    if (locked.length) steps.push(`Kunci MAC (Lock User Mikhmon) kini dijalankan MIKROTAL untuk profil ${locked.map((p) => p.name).join(', ')}`);
+    const autoRemove = this.settings.get().voucher.autoRemoveExpired;
+    steps.push(`Masa aktif voucher kini diatur MIKROTAL. Voucher yang habis selanjutnya akan ${autoRemove ? 'dihapus' : 'dinonaktifkan'} dari router (Pengaturan → Voucher)`);
+    const notifyOnly = info.profiles.filter((p) => /^ntf/i.test(p.expMode));
+    if (autoRemove && notifyOnly.length)
+      steps.push(`Perhatian: profil ${notifyOnly.map((p) => p.name).join(', ')} di Mikhmon diatur hanya memberi tahu saat habis, tetapi MIKROTAL diatur menghapus voucher habis. Matikan "hapus otomatis" di Pengaturan bila ingin tetap seperti Mikhmon`);
     return { steps, imported };
   }
 

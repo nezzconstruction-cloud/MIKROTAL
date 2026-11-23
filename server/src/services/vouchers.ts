@@ -94,6 +94,8 @@ export interface VoucherRow {
 /** Bila sebanyak ini voucher hilang sekaligus dari router, anggap data router belum lengkap (mis. baru reboot/update). */
 const MASS_MISSING_MIN = 4;
 const MASS_MISSING_RATIO = 0.5;
+/** Lama penundaan paling lama. Setelah itu voucher yang tetap hilang dianggap memang dihapus (mis. lewat Winbox). */
+const MASS_MISSING_GRACE_MS = 15 * 60_000;
 
 export const VOUCHER_COMMENT_PREFIX = 'MIKROTAL';
 
@@ -126,7 +128,10 @@ export class HttpError extends Error {
 export class VoucherService {
   private syncing = new Set<number>();
   private timer?: NodeJS.Timeout;
-  private lastAnomalyAlert = new Map<number, number>();
+  /** Sejak kapan banyak voucher hilang sekaligus, per router. */
+  private massMissingSince = new Map<number, number>();
+  /** Bisa diubah di tes. */
+  massMissingGraceMs = MASS_MISSING_GRACE_MS;
 
   constructor(
     private readonly db: DB,
@@ -152,7 +157,7 @@ export class VoucherService {
   }
 
   profileMeta(routerId: number, profile: string) {
-    return this.db.get<{ price: number; reseller_price: number; validity: string; time_limit: string; data_limit: number }>(
+    return this.db.get<{ price: number; reseller_price: number; validity: string; time_limit: string; data_limit: number; lock_mac: number }>(
       'SELECT * FROM profile_meta WHERE router_id = ? AND profile = ?',
       [routerId, profile],
     );
@@ -257,7 +262,7 @@ export class VoucherService {
       const vouchers = this.db.all<VoucherRow>(`SELECT * FROM vouchers WHERE router_id = ? AND status IN ('unused','active','used','disabled','removed')`, [routerId]);
       if (!vouchers.length) return { checked: 0, activated: 0, expired: 0, missing: 0, resets: 0, restored: 0 };
       const [users, active] = await Promise.all([
-        this.routers.exec(routerId, '/ip/hotspot/user/print', { '.proplist': '.id,name,uptime,bytes-in,bytes-out,disabled,comment' }),
+        this.routers.exec(routerId, '/ip/hotspot/user/print', { '.proplist': '.id,name,uptime,bytes-in,bytes-out,disabled,comment,mac-address' }),
         this.routers.exec(routerId, '/ip/hotspot/active/print', { '.proplist': '.id,user,address,mac-address,uptime,bytes-in,bytes-out' }),
       ]);
       const userMap = new Map<string, RosRow>(users.map((u) => [u.name, u]));
@@ -267,24 +272,44 @@ export class VoucherService {
       const nowIso = new Date(now).toISOString();
       const stats = { checked: vouchers.length, activated: 0, expired: 0, missing: 0, resets: 0, restored: 0, deferred: false };
 
-      // Banyak voucher hilang sekaligus → jangan tandai dihapus, tunggu router stabil
+      // Banyak voucher hilang sekaligus → jangan langsung tandai dihapus, tunggu router stabil.
+      // Penundaan dibatasi waktu: bila tetap hilang, voucher memang dihapus (mis. satu batch dihapus lewat Winbox).
       const tracked = vouchers.filter((v) => v.status !== 'removed');
       const missingNow = tracked.filter((v) => !userMap.has(v.code));
-      const deferMissing = missingNow.length >= MASS_MISSING_MIN && missingNow.length >= tracked.length * MASS_MISSING_RATIO;
-      if (deferMissing) {
-        stats.deferred = true;
-        const last = this.lastAnomalyAlert.get(routerId) ?? 0;
-        if (now - last > 3600_000) {
-          this.lastAnomalyAlert.set(routerId, now);
+      const massMissing = missingNow.length >= MASS_MISSING_MIN && missingNow.length >= tracked.length * MASS_MISSING_RATIO;
+      let deferMissing = false;
+      if (massMissing) {
+        const since = this.massMissingSince.get(routerId);
+        const graceMin = Math.round(this.massMissingGraceMs / 60_000);
+        if (since === undefined) {
+          this.massMissingSince.set(routerId, now);
+          deferMissing = true;
           this.alerts?.create({
             routerId,
             level: 'warning',
             type: 'voucher.sync.deferred',
             title: 'Sinkronisasi voucher ditunda',
-            message: `${missingNow.length} dari ${tracked.length} voucher tidak terlihat di router sekaligus (mungkin router baru reboot/update). Status voucher tidak diubah sampai data router lengkap kembali.`,
+            message: `${missingNow.length} dari ${tracked.length} voucher tidak terlihat di router sekaligus (mungkin router baru reboot/update). Status voucher tidak diubah selama ${graceMin} menit sambil menunggu data router lengkap kembali.`,
+          });
+        } else if (now - since < this.massMissingGraceMs) {
+          deferMissing = true;
+        } else {
+          this.massMissingSince.delete(routerId);
+          this.alerts?.create({
+            routerId,
+            level: 'info',
+            type: 'voucher.sync.removed',
+            title: 'Voucher ditandai dihapus',
+            message: `${missingNow.length} voucher tetap tidak ada di router setelah ${graceMin} menit, jadi ditandai dihapus. Bila muncul lagi di router, voucher dipulihkan otomatis.`,
           });
         }
+      } else {
+        this.massMissingSince.delete(routerId);
       }
+      stats.deferred = deferMissing;
+      const lockProfiles = new Set(
+        this.db.all<{ profile: string }>('SELECT profile FROM profile_meta WHERE router_id = ? AND lock_mac = 1', [routerId]).map((r) => r.profile),
+      );
 
       for (const v of vouchers) {
         const u = userMap.get(v.code);
@@ -335,6 +360,13 @@ export class VoucherService {
           if (timeLimit > 0) params['limit-uptime'] = formatDuration(Math.max(1, timeLimit - upOff));
           if (v.data_limit > 0) params['limit-bytes-total'] = String(Math.max(1, v.data_limit - inOff - outOff));
           await this.routers.exec(routerId, '/ip/hotspot/user/set', params).catch((err) => this.log.warn({ err }, `Gagal menyesuaikan batas voucher ${v.code}`));
+        }
+
+        // Kunci ke perangkat pertama yang login (pengganti "Lock User" Mikhmon)
+        if (!isExpired && a?.['mac-address'] && !u['mac-address'] && lockProfiles.has(v.profile)) {
+          await this.routers
+            .exec(routerId, '/ip/hotspot/user/set', { '.id': u['.id'], 'mac-address': a['mac-address'] })
+            .catch((err) => this.log.warn({ err }, `Gagal mengunci voucher ${v.code} ke MAC ${a['mac-address']}`));
         }
 
         let status: VoucherRow['status'] = u.disabled === 'true' ? 'disabled' : a ? 'active' : used ? 'used' : 'unused';
@@ -426,6 +458,8 @@ export class VoucherService {
    * Harga & masa aktif diambil dari Profil & Harga, atau dari metadata Mikhmon di script on-login.
    * Tanggal habis yang ditulis Mikhmon di komentar user (format lama maupun 7.10+) dipakai apa adanya,
    * agar voucher yang sudah berjalan tidak mendapat masa aktif baru.
+   * Voucher yang tanggal habisnya sudah lewat saat diimpor hanya dinonaktifkan di router, tidak dihapus:
+   * tanggal itu ditulis script lama yang bisa saja keliru, jadi operator yang memutuskan menghapusnya.
    */
   async importFromRouter(routerId: number, opts: { profile?: string; commentContains?: string; filter?: (u: RosRow) => boolean }) {
     const [users, profiles] = await Promise.all([
@@ -441,12 +475,20 @@ export class VoucherService {
     let withExpiry = 0;
     let restarted = 0;
     let metaFilled = 0;
+    const expiredAtImport: { code: string; id: string }[] = [];
     this.db.transaction(() => {
       // Profil tanpa harga di MIKROTAL: isi dari metadata Mikhmon
       for (const [profile, mm] of mikhmon) {
         if (!mm || !profile) continue;
         if (this.profileMeta(routerId, profile)) continue;
-        this.db.run('INSERT INTO profile_meta (router_id, profile, price, reseller_price, validity) VALUES (?, ?, ?, ?, ?)', [routerId, profile, mm.price, mm.resellerPrice, mm.validity]);
+        this.db.run('INSERT INTO profile_meta (router_id, profile, price, reseller_price, validity, lock_mac) VALUES (?, ?, ?, ?, ?, ?)', [
+          routerId,
+          profile,
+          mm.price,
+          mm.resellerPrice,
+          mm.validity,
+          /^enable/i.test(mm.lockUser) ? 1 : 0,
+        ]);
         metaFilled++;
       }
       for (const u of users) {
@@ -479,6 +521,8 @@ export class VoucherService {
           expiresAt = v > 0 ? new Date(nowMs + v * 1000).toISOString() : null;
           restarted++;
         }
+        const expiredNow = !!expiresAt && Date.parse(expiresAt) <= nowMs;
+        if (expiredNow) expiredAtImport.push({ code: u.name, id: u['.id'] ?? '' });
         this.db.run(
           `INSERT INTO vouchers (batch_id, router_id, code, password, profile, price, validity, time_limit, data_limit, status, router_item_id, created_at,
              activated_at, expires_at, uptime_seconds, bytes_in, bytes_out, raw_uptime, raw_bytes_in, raw_bytes_out)
@@ -492,7 +536,7 @@ export class VoucherService {
             validity,
             u['limit-uptime'] ?? '',
             Number(u['limit-bytes-total'] ?? 0),
-            activatedAt ? 'used' : 'unused',
+            expiredNow ? 'expired' : activatedAt ? 'used' : 'unused',
             u['.id'] ?? '',
             now,
             activatedAt,
@@ -508,7 +552,23 @@ export class VoucherService {
         imported++;
       }
     });
+    // Sudah lewat tanggal: putuskan sesi dan nonaktifkan saja (status "expired" tidak disentuh sinkronisasi berikutnya)
+    let expiredDisabled = 0;
+    if (expiredAtImport.length) {
+      const active = await this.routers.exec(routerId, '/ip/hotspot/active/print', { '.proplist': '.id,user' }).catch(() => [] as RosRow[]);
+      for (const e of expiredAtImport) {
+        try {
+          const a = active.find((x) => x.user === e.code);
+          if (a) await this.routers.exec(routerId, '/ip/hotspot/active/remove', { '.id': a['.id'] });
+          const u = users.find((x) => x.name === e.code);
+          if (u?.disabled !== 'true') await this.routers.exec(routerId, '/ip/hotspot/user/disable', { '.id': e.id });
+          expiredDisabled++;
+        } catch (err) {
+          this.log.warn({ err }, `Gagal menonaktifkan voucher kedaluwarsa ${e.code}`);
+        }
+      }
+    }
     if (imported) await this.sync(routerId).catch(() => undefined);
-    return { imported, withExpiry, restarted, metaFilled };
+    return { imported, withExpiry, restarted, metaFilled, expiredDisabled };
   }
 }

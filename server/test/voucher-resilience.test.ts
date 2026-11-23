@@ -99,3 +99,33 @@ test('daftar user di router mendadak kosong: voucher tidak ditandai dihapus, per
   assert.equal(s3.restored, 1);
   assert.equal(row(codes[5]).status, 'unused');
 });
+
+test('voucher dihapus massal lewat Winbox: penundaan dibatasi waktu, lalu ditandai dihapus', async () => {
+  const gen = await api('POST', '/api/vouchers/generate', { routerId, profile: '1HARI', qty: 6, length: 6, charset: 'numeric', prefix: 'W' });
+  const codes: string[] = (await api('GET', `/api/vouchers?batchId=${gen.body.batch.id}`)).body.rows.map((r: any) => r.code);
+  await ctx.vouchers.sync(routerId);
+  // hapus semua voucher yang dipantau di router, bukan hanya batch ini, agar melewati ambang 50%
+  const tracked = new Set(ctx.db.all<{ code: string }>(`SELECT code FROM vouchers WHERE router_id = ? AND status NOT IN ('removed','expired')`, [routerId]).map((r) => r.code));
+  const gone = (await ctx.routers.exec(routerId, '/ip/hotspot/user/print')).filter((u) => tracked.has(u.name));
+  await ctx.routers.exec(routerId, '/ip/hotspot/user/remove', { '.id': gone.map((u) => u['.id']).join(',') });
+
+  const s1: any = await ctx.vouchers.sync(routerId);
+  assert.equal(s1.deferred, true, 'sinkron pertama ditunda');
+  assert.equal(row(codes[0]).status, 'unused');
+  const s2: any = await ctx.vouchers.sync(routerId);
+  assert.equal(s2.deferred, true, 'masih dalam masa tunggu');
+
+  ctx.vouchers.massMissingGraceMs = 0; // masa tunggu habis
+  try {
+    const s3: any = await ctx.vouchers.sync(routerId);
+    assert.equal(s3.deferred, false);
+    assert.equal(s3.missing, gone.length);
+    for (const c of codes) assert.equal(row(c).status, 'removed', c);
+    const alerts = await api('GET', '/api/alerts');
+    assert.ok(alerts.body.rows.some((x: any) => x.type === 'voucher.sync.removed'));
+    const s4: any = await ctx.vouchers.sync(routerId);
+    assert.equal(s4.deferred, false, 'tidak ada peringatan berulang');
+  } finally {
+    ctx.vouchers.massMissingGraceMs = 15 * 60_000;
+  }
+});

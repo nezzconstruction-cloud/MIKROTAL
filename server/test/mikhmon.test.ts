@@ -53,7 +53,8 @@ after(async () => {
 
 test('Mikhmon: deteksi, ambil alih dengan tanggal habis asli, lalu kembalikan script', async () => {
   const now = Date.now();
-  await ex('/ip/hotspot/user/profile/add', { name: 'MK1HARI', 'rate-limit': '2M/2M', 'on-login': ON_LOGIN });
+  const onLoginLock = ON_LOGIN.replace(',Disable,', ',Enable,');
+  await ex('/ip/hotspot/user/profile/add', { name: 'MK1HARI', 'rate-limit': '2M/2M', 'on-login': onLoginLock });
   await ex('/system/scheduler/add', { name: 'MK1HARI', interval: '2m', 'on-event': ':foreach i in=[/ip hotspot user find where profile="MK1HARI"] do={:local c [/ip hotspot user get $i comment]; /ip hotspot user remove $i}' });
   const users: [string, string, string][] = [
     ['mk-baru', 'vc-001-11.23.26-', '0s'],
@@ -85,6 +86,7 @@ test('Mikhmon: deteksi, ambil alih dengan tanggal habis asli, lalu kembalikan sc
   assert.equal(t.body.imported.withExpiry, 2);
   assert.equal(t.body.imported.restarted, 1);
   assert.equal(t.body.imported.metaFilled >= 1, true);
+  assert.equal(t.body.imported.expiredDisabled, 1);
 
   const row = (c: string) => ctx.db.get<any>('SELECT * FROM vouchers WHERE code = ?', [c]);
   assert.equal(row('mk-baru').status, 'unused');
@@ -92,12 +94,29 @@ test('Mikhmon: deteksi, ambil alih dengan tanggal habis asli, lalu kembalikan sc
   assert.equal(row('mk-jalan').status, 'used');
   assert.equal(Math.abs(Date.parse(row('mk-jalan').expires_at) - (now + 10 * 3600_000)) < 2000, true, 'tanggal habis asli dipertahankan');
   assert.equal(row('mk-habis').status, 'expired');
-  assert.equal((await ex('/ip/hotspot/user/print')).some((u) => u.name === 'mk-habis'), false, 'yang sudah lewat tanggal dihapus');
+  const habis = () => ex('/ip/hotspot/user/print').then((l) => l.find((u) => u.name === 'mk-habis'));
+  assert.equal((await habis())?.disabled, 'true', 'yang sudah lewat tanggal hanya dinonaktifkan, tidak dihapus');
+  await ctx.vouchers.sync(routerId);
+  assert.ok(await habis(), 'sinkronisasi berikutnya juga tidak menghapusnya');
   assert.equal(row('mk-rusak').status, 'used');
   assert.ok(Date.parse(row('mk-rusak').expires_at) > now + 23 * 3600_000, 'komentar rusak: masa aktif dihitung dari sekarang');
 
   const prof = (await ex('/ip/hotspot/user/profile/print')).find((p) => p.name === 'MK1HARI')!;
   assert.equal(prof['on-login'] ?? '', '', 'script on-login Mikhmon dikosongkan');
+
+  // Lock User Mikhmon diambil alih MIKROTAL: voucher dikunci ke MAC perangkat pertama yang login
+  assert.equal(ctx.db.get<any>('SELECT lock_mac FROM profile_meta WHERE router_id = ? AND profile = ?', [routerId, 'MK1HARI']).lock_mac, 1);
+  await ex('/ip/hotspot/active/add', { user: 'mk-baru', address: '10.5.50.77', 'mac-address': 'AA:BB:CC:00:11:22', uptime: '1m' });
+  await ctx.vouchers.sync(routerId);
+  assert.equal((await ex('/ip/hotspot/user/print')).find((u) => u.name === 'mk-baru')!['mac-address'], 'AA:BB:CC:00:11:22');
+  assert.equal(row('mk-baru').status, 'active');
+  // menyimpan profil dari form lama (tanpa lock_mac) tidak mematikan kunci; dari form baru bisa diubah
+  assert.equal((await api('PUT', `/api/routers/${routerId}/hotspot/profiles/MK1HARI`, { name: 'MK1HARI', rate_limit: '2M/2M', price: 5000 })).status, 200);
+  const meta = async () => (await api('GET', `/api/routers/${routerId}/hotspot/profiles`)).body.find((p: any) => p.name === 'MK1HARI').meta.lock_mac;
+  assert.equal(await meta(), true);
+  await api('PUT', `/api/routers/${routerId}/hotspot/profiles/MK1HARI`, { name: 'MK1HARI', rate_limit: '2M/2M', price: 5000, lock_mac: false });
+  assert.equal(await meta(), false);
+  await api('PUT', `/api/routers/${routerId}/hotspot/profiles/MK1HARI`, { name: 'MK1HARI', rate_limit: '2M/2M', price: 5000, lock_mac: true });
   assert.equal((await ex('/system/scheduler/print')).find((s) => s.name === 'MK1HARI')!.disabled, 'true');
   const d2 = await api('GET', `/api/routers/${routerId}/mikhmon`);
   assert.equal(d2.body.takenOver, true);
@@ -105,7 +124,7 @@ test('Mikhmon: deteksi, ambil alih dengan tanggal habis asli, lalu kembalikan sc
   const r = await api('POST', `/api/routers/${routerId}/mikhmon/restore`);
   assert.equal(r.status, 200);
   assert.equal(r.body.restored, 2);
-  assert.equal((await ex('/ip/hotspot/user/profile/print')).find((p) => p.name === 'MK1HARI')!['on-login'], ON_LOGIN);
+  assert.equal((await ex('/ip/hotspot/user/profile/print')).find((p) => p.name === 'MK1HARI')!['on-login'], onLoginLock);
   assert.equal((await ex('/system/scheduler/print')).find((s) => s.name === 'MK1HARI')!.disabled, 'false');
   assert.equal((await api('POST', `/api/routers/${routerId}/mikhmon/restore`)).status, 400);
 });

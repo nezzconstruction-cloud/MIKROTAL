@@ -24,10 +24,11 @@ interface SyncData {
 
 interface MikhmonInfo {
   detected: boolean;
-  profiles: { name: string; expMode: string; price: number; validity: string; scriptActive: boolean }[];
+  profiles: { name: string; expMode: string; price: number; validity: string; lockUser: string; scriptActive: boolean }[];
   schedulers: { name: string; interval: string; disabled: boolean }[];
   users: { total: number; untracked: number; vouchers: number; vouchersUntracked: number; datedFuture: number; datedPast: number; badComment: number };
   takenOver: boolean;
+  autoRemoveExpired: boolean;
   backups: { kind: string; name: string; at: string }[];
 }
 
@@ -42,6 +43,7 @@ function MikhmonCard({ routerId, onChanged }: { routerId: number; onChanged: () 
   if (!data || (!data.detected && !data.takenOver)) return null;
   const write = can('config.write');
   const activeScripts = data.profiles.filter((p) => p.scriptActive).length + data.schedulers.filter((s) => !s.disabled).length;
+  const lockedProfiles = data.profiles.filter((p) => /^enable/i.test(p.lockUser)).map((p) => p.name);
 
   const takeover = async () => {
     const r = await run(() => post<{ steps: string[] }>(`/api/routers/${routerId}/mikhmon/takeover`, { disableScripts }));
@@ -146,7 +148,22 @@ function MikhmonCard({ routerId, onChanged }: { routerId: number; onChanged: () 
               <b className="text-fg">{data.users.vouchersUntracked}</b> voucher Mikhmon (komentar <span className="font-mono">vc-</span>/<span className="font-mono">up-</span> atau tanggal habis) diimpor. Akun member biasa tidak disentuh.
             </li>
             <li>Voucher yang sudah berjalan memakai tanggal habis dari komentarnya, jadi tidak mendapat masa aktif baru. Bila tanggalnya rusak, masa aktif dihitung mulai sekarang.</li>
+            {data.users.datedPast > 0 && (
+              <li>
+                <b className="text-fg">{data.users.datedPast}</b> voucher yang tanggal habisnya sudah lewat hanya <b className="text-fg">dinonaktifkan</b>, tidak dihapus. Tanggal itu ditulis script lama yang bisa keliru, jadi periksa dulu di daftar voucher sebelum menghapusnya.
+              </li>
+            )}
             <li>Harga dan masa aktif profil diambil dari data Mikhmon bila belum diisi di MIKROTAL.</li>
+            {disableScripts && lockedProfiles.length > 0 && (
+              <li>
+                Kunci MAC (Lock User) untuk profil <b className="text-fg">{lockedProfiles.join(', ')}</b> kini dijalankan MIKROTAL, karena script on-login yang menguncinya dikosongkan.
+              </li>
+            )}
+            {disableScripts && (
+              <li>
+                Voucher yang habis setelah ini akan <b className="text-fg">{data.autoRemoveExpired ? 'dihapus' : 'dinonaktifkan'}</b> dari router sesuai Pengaturan → Voucher, bukan mode kedaluwarsa di Mikhmon.
+              </li>
+            )}
           </ol>
           <Toggle checked={disableScripts} onChange={setDisableScripts} label="Nonaktifkan script on-login dan scheduler Mikhmon (disarankan)" />
           <p className="text-[11px] text-subtle">

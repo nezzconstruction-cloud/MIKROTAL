@@ -352,4 +352,11 @@ export const migrations: { version: number; sql: string }[] = [
       );
     `,
   },
+  {
+    version: 7,
+    sql: `
+      -- Kunci voucher ke perangkat (MAC) pertama yang login, pengganti fitur "Lock User" Mikhmon
+      ALTER TABLE profile_meta ADD COLUMN lock_mac INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
