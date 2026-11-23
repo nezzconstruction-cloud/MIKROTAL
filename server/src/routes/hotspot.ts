@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { auditFrom, idParam, makeAuth, type AppContext } from '../context.js';
 import { isValidDuration, parseBytes } from '../lib/duration.js';
 import { HttpError } from '../services/vouchers.js';
+import { looksLikeVoucher } from '../lib/mikhmon.js';
 
 const durationField = z
   .string()
@@ -189,8 +190,9 @@ export async function hotspotRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.post('/api/routers/:id/hotspot/import', { preHandler: auth('voucher.write') }, async (req) => {
     const id = rid((req.params as any).id);
-    const b = z.object({ profile: z.string().optional(), commentContains: z.string().optional() }).parse(req.body ?? {});
-    const r = await ctx.vouchers.importFromRouter(id, b);
+    const b = z.object({ profile: z.string().optional(), commentContains: z.string().optional(), vouchersOnly: z.boolean().default(false) }).parse(req.body ?? {});
+    const offset = ctx.settings.get().brand.timezoneOffset;
+    const r = await ctx.vouchers.importFromRouter(id, { ...b, filter: b.vouchersOnly ? (u) => looksLikeVoucher(u, offset) : undefined });
     auditFrom(ctx, req, 'voucher.import', '', { routerId: id, ...r });
     return r;
   });

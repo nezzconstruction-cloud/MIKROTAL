@@ -102,6 +102,12 @@ test('sinkronisasi: pindai router, jadikan PPP Profile paket, impor PPP secret',
   assert.equal(s.body.ppp.notImported.length, 0, 'pelanggan contoh sudah terdaftar');
   assert.ok(s.body.hotspot.profiles.some((p: any) => p.name === '1HARI' && p.priced));
   assert.ok(s.body.live.find((l: any) => l.key === 'tree').count >= 1);
+  // akun member (password beda dari username) tidak dihitung sebagai voucher yang perlu diimpor
+  assert.equal(s.body.hotspot.members, 5);
+  assert.equal(s.body.hotspot.notTracked, 0);
+  await api('POST', `/api/routers/${routerId}/ros/add`, { path: '/ip/hotspot/user', params: { name: 'K9Q2', password: 'K9Q2', profile: '1HARI' } });
+  const imp = await api('POST', `/api/routers/${routerId}/hotspot/import`, { vouchersOnly: true });
+  assert.equal(imp.body.imported, 1, 'hanya voucher yang diimpor, member tidak');
 
   const mk = await api('POST', `/api/routers/${routerId}/sync/packages`, { profiles: ['UP TO 50 MB', 'PPPoE-10M', 'TIDAK-ADA'], validity: '30d' });
   assert.equal(mk.status, 200, JSON.stringify(mk.body));

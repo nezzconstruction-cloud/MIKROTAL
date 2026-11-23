@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { auditFrom, idParam, makeAuth, type AppContext } from '../context.js';
 import { isValidDuration } from '../lib/duration.js';
 import type { RosRow } from '../lib/routeros/types.js';
+import { looksLikeVoucher } from '../lib/mikhmon.js';
 
 /** Hitungan setelan router lain yang dikelola langsung (dibaca langsung dari router, tidak disalin). */
 const LIVE_MENUS: { key: string; path: string; label: string; to: string }[] = [
@@ -32,10 +33,11 @@ export async function syncRoutes(app: FastifyInstance, ctx: AppContext) {
       ctx.routers.exec(id, '/ppp/profile/print'),
       ctx.routers.exec(id, '/ppp/secret/print', { '.proplist': 'name,profile,service,comment,disabled' }),
       ex('/ip/hotspot/user/profile/print', { '.proplist': 'name,rate-limit,shared-users' }),
-      ex('/ip/hotspot/user/print', { '.proplist': 'name,profile' }),
+      ex('/ip/hotspot/user/print', { '.proplist': 'name,password,profile,comment' }),
       ...LIVE_MENUS.map((m) => ex(`${m.path}/print`, { '.proplist': '.id' })),
     ]);
     const isolir = ctx.settings.get().pppoe.isolirProfile;
+    const offset = ctx.settings.get().brand.timezoneOffset;
     const packages = ctx.db.all<any>('SELECT id, name, profile, price, validity FROM ppp_packages WHERE router_id = ?', [id]);
     const customers = ctx.db.all<any>('SELECT id, name, username, on_router FROM customers WHERE router_id = ?', [id]);
     const known = new Set(customers.map((c) => c.username));
@@ -72,12 +74,33 @@ export async function syncRoutes(app: FastifyInstance, ctx: AppContext) {
         ? {
             profiles: hsProfiles.filter((p) => p.name !== 'default').map((p) => ({ name: p.name, rateLimit: p['rate-limit'] ?? '', priced: metas.has(p.name), users: (hsUsers ?? []).filter((u) => u.profile === p.name).length })),
             usersTotal: (hsUsers ?? []).filter((u) => u.name !== 'default-trial').length,
-            notTracked: (hsUsers ?? []).filter((u) => u.name !== 'default-trial' && !vouchers.has(u.name)).length,
+            notTracked: (hsUsers ?? []).filter((u) => u.name !== 'default-trial' && !vouchers.has(u.name) && looksLikeVoucher(u, offset)).length,
+            members: (hsUsers ?? []).filter((u) => u.name !== 'default-trial' && !looksLikeVoucher(u, offset)).length,
           }
         : null,
       live: LIVE_MENUS.map((m, i) => ({ key: m.key, label: m.label, to: m.to, count: counts[i] ? counts[i]!.length : null })),
       scannedAt: new Date().toISOString(),
     };
+  });
+
+  // ---- Pindah dari Mikhmon ----
+  app.get('/api/routers/:id/mikhmon', { preHandler: auth('voucher.view') }, async (req) => {
+    return ctx.mikhmon.detect(idParam((req.params as any).id));
+  });
+
+  app.post('/api/routers/:id/mikhmon/takeover', { preHandler: auth('config.write') }, async (req) => {
+    const id = idParam((req.params as any).id);
+    const b = z.object({ disableScripts: z.boolean().default(true) }).parse(req.body ?? {});
+    const r = await ctx.mikhmon.takeover(id, b);
+    auditFrom(ctx, req, 'mikhmon.takeover', String(id), { ...r.imported, disableScripts: b.disableScripts });
+    return r;
+  });
+
+  app.post('/api/routers/:id/mikhmon/restore', { preHandler: auth('config.write') }, async (req) => {
+    const id = idParam((req.params as any).id);
+    const r = await ctx.mikhmon.restore(id);
+    auditFrom(ctx, req, 'mikhmon.restore', String(id), r);
+    return r;
   });
 
   /** Jadikan PPP Profile yang ada di router sebagai paket MIKROTAL (harga diisi kemudian). */

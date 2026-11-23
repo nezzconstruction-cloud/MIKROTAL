@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import type { DB } from '../db/index.js';
 import { formatDuration, parseDuration } from '../lib/duration.js';
+import { parseMikhmonMeta, parseRouterDate } from '../lib/mikhmon.js';
 import type { RosRow } from '../lib/routeros/types.js';
 import type { AlertService, Hub } from './alerts.js';
 import type { RouterManager } from './routers.js';
@@ -420,27 +421,94 @@ export class VoucherService {
     return { removed: vouchers.length };
   }
 
-  /** Impor pengguna hotspot yang sudah ada di router (mis. dari Mikhmon) ke database voucher. */
-  async importFromRouter(routerId: number, opts: { profile?: string; commentContains?: string }) {
-    const users = await this.routers.exec(routerId, '/ip/hotspot/user/print');
+  /**
+   * Impor pengguna hotspot yang sudah ada di router (mis. dari Mikhmon) ke database voucher.
+   * Harga & masa aktif diambil dari Profil & Harga, atau dari metadata Mikhmon di script on-login.
+   * Tanggal habis yang ditulis Mikhmon di komentar user (format lama maupun 7.10+) dipakai apa adanya,
+   * agar voucher yang sudah berjalan tidak mendapat masa aktif baru.
+   */
+  async importFromRouter(routerId: number, opts: { profile?: string; commentContains?: string; filter?: (u: RosRow) => boolean }) {
+    const [users, profiles] = await Promise.all([
+      this.routers.exec(routerId, '/ip/hotspot/user/print'),
+      this.routers.exec(routerId, '/ip/hotspot/user/profile/print', { '.proplist': 'name,on-login' }).catch(() => [] as RosRow[]),
+    ]);
+    const mikhmon = new Map(profiles.map((p) => [p.name, parseMikhmonMeta(p['on-login'])]));
     const existing = new Set(this.db.all<{ code: string }>('SELECT code FROM vouchers WHERE router_id = ?', [routerId]).map((r) => r.code));
-    const now = new Date().toISOString();
+    const offset = this.settings.get().brand.timezoneOffset;
+    const nowMs = Date.now();
+    const now = new Date(nowMs).toISOString();
     let imported = 0;
+    let withExpiry = 0;
+    let restarted = 0;
+    let metaFilled = 0;
     this.db.transaction(() => {
+      // Profil tanpa harga di MIKROTAL: isi dari metadata Mikhmon
+      for (const [profile, mm] of mikhmon) {
+        if (!mm || !profile) continue;
+        if (this.profileMeta(routerId, profile)) continue;
+        this.db.run('INSERT INTO profile_meta (router_id, profile, price, reseller_price, validity) VALUES (?, ?, ?, ?, ?)', [routerId, profile, mm.price, mm.resellerPrice, mm.validity]);
+        metaFilled++;
+      }
       for (const u of users) {
         if (!u.name || existing.has(u.name) || u.name === 'default-trial') continue;
         if (opts.profile && u.profile !== opts.profile) continue;
         if (opts.commentContains && !(u.comment ?? '').toLowerCase().includes(opts.commentContains.toLowerCase())) continue;
-        const meta = this.profileMeta(routerId, u.profile ?? 'default');
+        if (opts.filter && !opts.filter(u)) continue;
+        const profile = u.profile ?? 'default';
+        const meta = this.profileMeta(routerId, profile);
+        const mm = mikhmon.get(profile);
+        const price = meta?.price || mm?.price || 0;
+        const validity = meta?.validity || mm?.validity || '';
+        const uptime = parseDuration(u.uptime);
+        const bytesIn = Number(u['bytes-in'] ?? 0);
+        const bytesOut = Number(u['bytes-out'] ?? 0);
+        const used = uptime > 0 || bytesIn + bytesOut > 0;
+        const exp = parseRouterDate(u.comment, offset);
+        let activatedAt: string | null = null;
+        let expiresAt: string | null = null;
+        if (exp) {
+          // Tanggal habis dari Mikhmon: pakai itu, mundurkan tanggal aktivasi sesuai masa aktif
+          expiresAt = exp.toISOString();
+          const v = parseDuration(validity);
+          activatedAt = new Date(v > 0 ? Math.min(nowMs, exp.getTime() - v * 1000) : nowMs).toISOString();
+          withExpiry++;
+        } else if (used) {
+          // Sudah terpakai tapi tanggal habis tidak terbaca (komentar rusak oleh script lama): hitung mulai sekarang
+          activatedAt = now;
+          const v = parseDuration(validity);
+          expiresAt = v > 0 ? new Date(nowMs + v * 1000).toISOString() : null;
+          restarted++;
+        }
         this.db.run(
-          `INSERT INTO vouchers (batch_id, router_id, code, password, profile, price, validity, time_limit, data_limit, status, router_item_id, created_at)
-           VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'unused', ?, ?)`,
-          [routerId, u.name, u.password ?? '', u.profile ?? 'default', meta?.price ?? 0, meta?.validity ?? '', u['limit-uptime'] ?? '', Number(u['limit-bytes-total'] ?? 0), u['.id'] ?? '', now],
+          `INSERT INTO vouchers (batch_id, router_id, code, password, profile, price, validity, time_limit, data_limit, status, router_item_id, created_at,
+             activated_at, expires_at, uptime_seconds, bytes_in, bytes_out, raw_uptime, raw_bytes_in, raw_bytes_out)
+           VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            routerId,
+            u.name,
+            u.password ?? '',
+            profile,
+            price,
+            validity,
+            u['limit-uptime'] ?? '',
+            Number(u['limit-bytes-total'] ?? 0),
+            activatedAt ? 'used' : 'unused',
+            u['.id'] ?? '',
+            now,
+            activatedAt,
+            expiresAt,
+            uptime,
+            bytesIn,
+            bytesOut,
+            uptime,
+            bytesIn,
+            bytesOut,
+          ],
         );
         imported++;
       }
     });
     if (imported) await this.sync(routerId).catch(() => undefined);
-    return { imported };
+    return { imported, withExpiry, restarted, metaFilled };
   }
 }

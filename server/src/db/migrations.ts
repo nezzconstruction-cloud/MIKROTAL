@@ -337,4 +337,19 @@ export const migrations: { version: number; sql: string }[] = [
       UPDATE vouchers SET raw_uptime = uptime_seconds, raw_bytes_in = bytes_in, raw_bytes_out = bytes_out;
     `,
   },
+  {
+    version: 6,
+    sql: `
+      -- Cadangan script Mikhmon yang dinonaktifkan saat MIKROTAL mengambil alih, agar bisa dikembalikan
+      CREATE TABLE mikhmon_backups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        router_id INTEGER NOT NULL REFERENCES routers(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('profile','scheduler')),
+        name TEXT NOT NULL,
+        value TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        UNIQUE (router_id, kind, name)
+      );
+    `,
+  },
 ];

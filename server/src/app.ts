@@ -17,6 +17,7 @@ import { BackupService } from './services/backup.js';
 import { MonitorService } from './services/monitor.js';
 import { PppoeService } from './services/pppoe.js';
 import { PortalService } from './services/portal.js';
+import { MikhmonService } from './services/mikhmon.js';
 import { RouterManager } from './services/routers.js';
 import { SettingsService } from './services/settings.js';
 import { HttpError, VoucherService } from './services/vouchers.js';
@@ -56,8 +57,9 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
   const vouchers = new VoucherService(db, routers, settings, hub, app.log, alerts);
   const pppoe = new PppoeService(db, routers, settings, hub, alerts, app.log);
   const portal = new PortalService(db, routers, settings);
+  const mikhmon = new MikhmonService(db, routers, settings, vouchers);
   const backup = new BackupService(db, routers, settings, alerts);
-  const ctx: AppContext = { config, db, box, hub, settings, routers, monitor, vouchers, pppoe, portal, alerts, audit, backup };
+  const ctx: AppContext = { config, db, box, hub, settings, routers, monitor, vouchers, pppoe, portal, mikhmon, alerts, audit, backup };
 
   seed(ctx);
 

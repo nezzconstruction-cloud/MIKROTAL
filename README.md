@@ -97,7 +97,8 @@ Setelah terpasang, lanjutkan ke [Menghubungkan MikroTik asli](#menghubungkan-mik
 - **Generate massal** (sampai 1000 per batch): prefix, panjang kode, jenis karakter tanpa huruf membingungkan (0/O, 1/I), username = password atau terpisah.
 - **Cetak** dengan 3 template: kartu A4 dengan **QR login otomatis**, ringkas hemat kertas, dan struk **thermal 58mm**. Bisa disimpan sebagai PDF.
 - **Sinkronisasi otomatis** dengan router. MIKROTAL mendeteksi kapan voucher pertama kali dipakai, menghitung masa aktif sejak login pertama, lalu menghapus atau menonaktifkan voucher yang kedaluwarsa (waktu/kuota/masa aktif habis).
-- Impor pengguna hotspot lama (mis. dari Mikhmon) agar ikut dipantau.
+- **Pindah dari Mikhmon** (Sinkronisasi Router): voucher Mikhmon diimpor beserta tanggal habisnya (format lama maupun RouterOS 7.10+), harga dan masa aktif diambil dari data profil Mikhmon, lalu script on-login dan scheduler Mikhmon dinonaktifkan dengan cadangan yang bisa dikembalikan. Akun member tidak disentuh.
+- **Tahan reboot/update RouterOS**: counter voucher yang tereset dijumlahkan, dan voucher tidak ditandai hilang bila daftar user di router sesaat kosong.
 - **Reseller dengan sistem saldo**: top up, potong saldo otomatis saat generate, refund voucher yang belum terpakai, riwayat transaksi, dan akun login khusus reseller.
 - **Laporan penjualan**: harian, per profil, per reseller, per router, stok voucher, dan ekspor CSV.
 - Halaman publik **/cek** untuk pelanggan memeriksa status dan sisa masa aktif voucher.
