@@ -5,6 +5,8 @@ export type RosParams = Record<string, ParamValue>;
 
 export interface RouterConnection {
   readonly connected: boolean;
+  /** Alamat IP lokal server MIKROTAL pada koneksi ke router (alamat yang bisa dijangkau router). */
+  readonly localAddress?: string;
   connect(): Promise<void>;
   exec(command: string, params?: RosParams, queries?: string[]): Promise<RosRow[]>;
   close(): void;

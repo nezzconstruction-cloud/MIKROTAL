@@ -39,6 +39,10 @@ export class RouterOSClient extends EventEmitter implements RouterConnection {
     return this._connected;
   }
 
+  get localAddress() {
+    return this.socket?.localAddress?.replace(/^::ffff:/, '');
+  }
+
   async connect(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       const { host, port } = this.creds;

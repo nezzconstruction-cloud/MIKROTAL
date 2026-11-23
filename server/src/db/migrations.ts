@@ -307,4 +307,20 @@ export const migrations: { version: number; sql: string }[] = [
       ALTER TABLE customers ADD COLUMN lng REAL;
     `,
   },
+  {
+    version: 4,
+    sql: `
+      CREATE TABLE hotspot_portals (
+        router_id INTEGER PRIMARY KEY REFERENCES routers(id) ON DELETE CASCADE,
+        config TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        profile TEXT,
+        installed_dir TEXT,
+        previous_dir TEXT,
+        base_url TEXT,
+        installed_at TEXT,
+        installed_by TEXT
+      );
+    `,
+  },
 ];

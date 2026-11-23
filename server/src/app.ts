@@ -16,6 +16,7 @@ import { AlertService, AuditService, Hub } from './services/alerts.js';
 import { BackupService } from './services/backup.js';
 import { MonitorService } from './services/monitor.js';
 import { PppoeService } from './services/pppoe.js';
+import { PortalService } from './services/portal.js';
 import { RouterManager } from './services/routers.js';
 import { SettingsService } from './services/settings.js';
 import { HttpError, VoucherService } from './services/vouchers.js';
@@ -24,6 +25,7 @@ import { routerRoutes } from './routes/routers.js';
 import { hotspotRoutes } from './routes/hotspot.js';
 import { voucherRoutes } from './routes/vouchers.js';
 import { pppoeRoutes } from './routes/pppoe.js';
+import { portalRoutes } from './routes/portal.js';
 import { businessRoutes } from './routes/business.js';
 import { adminRoutes } from './routes/admin.js';
 import { publicRoutes } from './routes/public.js';
@@ -51,8 +53,9 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
   const monitor = new MonitorService(db, routers, settings, alerts, hub, app.log);
   const vouchers = new VoucherService(db, routers, settings, hub, app.log);
   const pppoe = new PppoeService(db, routers, settings, hub, alerts, app.log);
+  const portal = new PortalService(db, routers, settings);
   const backup = new BackupService(db, routers, settings, alerts);
-  const ctx: AppContext = { config, db, box, hub, settings, routers, monitor, vouchers, pppoe, alerts, audit, backup };
+  const ctx: AppContext = { config, db, box, hub, settings, routers, monitor, vouchers, pppoe, portal, alerts, audit, backup };
 
   seed(ctx);
 
@@ -98,6 +101,7 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
     await hotspotRoutes(api, ctx);
     await voucherRoutes(api, ctx);
     await pppoeRoutes(api, ctx);
+    await portalRoutes(api, ctx);
     await businessRoutes(api, ctx);
     await adminRoutes(api, ctx);
   });
