@@ -38,6 +38,8 @@ const PppVouchers = lazy(() => import('./pages/PppVouchers'));
 const PppVoucherPrint = lazy(() => import('./pages/PppVoucherPrint'));
 const Topology = lazy(() => import('./pages/Topology'));
 const Troubleshoot = lazy(() => import('./pages/Troubleshoot'));
+const RouterMenu = lazy(() => import('./pages/RouterMenu'));
+const RouterSync = lazy(() => import('./pages/RouterSync'));
 const Isolir = lazy(() => import('./pages/Isolir'));
 
 function Guard({ perm, children }: { perm?: string; children: ReactNode }) {
@@ -97,6 +99,8 @@ export function App() {
         >
           <Route index element={<Dashboard />} />
           <Route path="routers" element={<Guard perm="router.view"><Routers /></Guard>} />
+          <Route path="sync" element={<Guard perm="config.view"><RouterSync /></Guard>} />
+          <Route path="router-menu" element={<Guard perm="config.view"><RouterMenu /></Guard>} />
           <Route path="monitor" element={<Guard perm="router.view"><Monitor /></Guard>} />
           <Route path="traffic" element={<Guard perm="router.view"><Traffic /></Guard>} />
           <Route path="logs" element={<Guard perm="router.view"><Logs /></Guard>} />

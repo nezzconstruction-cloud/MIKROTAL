@@ -189,10 +189,12 @@ function createInitialState(identity: string): SimState {
       { name: 'cctv', target: '192.168.88.10/32', 'max-limit': '5M/5M' },
     ]),
     '/queue/type': mk([{ name: 'pcq-download', kind: 'pcq', 'pcq-classifier': 'dst-address', 'pcq-rate': '0' }]),
+    '/queue/tree': mk([{ name: 'total-download', parent: 'global', 'packet-mark': 'down', 'max-limit': '100M', priority: '8' }]),
     '/ppp/profile': mk([
       { name: 'default', 'local-address': '', 'remote-address': '', 'rate-limit': '' },
       { name: 'PPPoE-10M', 'local-address': '172.16.0.1', 'remote-address': 'pppoe-pool', 'rate-limit': '10M/10M' },
       { name: 'PPPoE-20M', 'local-address': '172.16.0.1', 'remote-address': 'pppoe-pool', 'rate-limit': '20M/20M' },
+      { name: 'UP TO 50 MB', 'local-address': '172.16.0.1', 'remote-address': 'pppoe-pool', 'rate-limit': '50M/50M 0/0 0/0 8/8 8 30M/30M', 'only-one': 'default', bridge: '' },
     ]),
     '/ppp/secret': mk([
       { name: 'pelanggan01', password: 'rahasia01', service: 'pppoe', profile: 'PPPoE-10M', 'remote-address': '', comment: 'Pak Joko' },

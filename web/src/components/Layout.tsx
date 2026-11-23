@@ -17,6 +17,7 @@ import {
   Menu,
   Moon,
   Network,
+  RefreshCcwDot,
   Router as RouterIcon,
   Settings,
   Shield,
@@ -148,6 +149,7 @@ const NAV: NavGroup[] = [
     icon: <Wrench className="size-4" />,
     perm: 'config.view',
     items: [
+      { to: '/router-menu', label: 'Semua Menu Router' },
       { to: '/system', label: 'Sistem & Backup' },
       r('scheduler', 'Scheduler'),
       r('scripts', 'Script'),
@@ -163,6 +165,7 @@ const NAV: NavGroup[] = [
 const TOP_LINKS: (NavItem & { icon: ReactNode })[] = [
   { to: '/', label: 'Dashboard', icon: <LayoutDashboard className="size-4" /> },
   { to: '/routers', label: 'Router', icon: <RouterIcon className="size-4" />, perm: 'router.view' },
+  { to: '/sync', label: 'Sinkronisasi Router', icon: <RefreshCcwDot className="size-4" />, perm: 'config.view' },
 ];
 
 const BUSINESS_LINKS: (NavItem & { icon: ReactNode })[] = [

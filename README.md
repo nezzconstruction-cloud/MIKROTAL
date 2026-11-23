@@ -20,7 +20,8 @@
 | Mencari kabel putus | Peta jalur server → ODC → ODP → rumah dan scan yang menunjuk segmen yang diduga putus |
 | Menjual voucher hotspot | Generate massal, cetak dengan QR, reseller bersaldo, laporan penjualan |
 | Halaman login hotspot | Editor portal login dengan pratinjau langsung, dipasang ke router dengan satu tombol |
-| Mengatur router | 40+ menu RouterOS (firewall, queue, DHCP, PPP, dll) tanpa Winbox |
+| Mengatur router | 40+ menu siap pakai, plus **Semua Menu Router** untuk membuka dan mengubah menu RouterOS apa pun beserta semua propertinya |
+| Menyamakan data | **Sinkronisasi Router**: PPP Profile jadi paket, PPP Secret jadi pelanggan, user hotspot jadi voucher yang dipantau |
 
 | Pelanggan PPPoE | Topologi ODC / ODP |
 |---|---|
@@ -214,6 +215,13 @@ Di **Pengaturan → PPPoE & isolir**, isi **IP server MIKROTAL** (alamat yang bi
 Semua aturan diberi komentar `MIKROTAL-ISOLIR` dan tidak digandakan bila tombol ditekan lagi. Permintaan dari IP pool isolir otomatis diarahkan MIKROTAL ke halaman `/isolir` (form isi voucher), sehingga MIKROTAL harus melihat IP asli pelanggan: jangan lewatkan trafik isolir melalui masquerade, dan bila memakai reverse proxy pastikan header `X-Forwarded-For` diteruskan. Situs HTTPS tidak bisa dialihkan; pelanggan perlu membuka situs HTTP apa pun atau alamat `/isi` secara langsung.
 
 > Aplikasi menjadi acuan status akun: bila profil atau status disabled sebuah akun pelanggan diubah langsung di Winbox, sinkronisasi berikutnya mengembalikannya sesuai data di MIKROTAL.
+
+## Sinkronisasi & semua menu router
+
+- **Setelan router tidak disalin.** Setiap menu MIKROTAL membaca langsung dari router saat dibuka, jadi selalu sama dengan Winbox. Perubahan dari MIKROTAL langsung dikirim ke router dan tercatat di Audit Log.
+- **Sinkronisasi Router** memindai router dan menunjukkan data usaha yang belum ada di MIKROTAL: PPP Profile yang belum jadi paket (bisa dibuat sekaligus, harga diisi kemudian), PPP Secret yang belum jadi pelanggan, pelanggan yang akunnya hilang dari router, profil hotspot tanpa harga, dan user hotspot yang belum dipantau.
+- **Semua properti**: form setiap menu punya bagian "Semua properti lain dari router" yang memuat seluruh setelan item itu (burst, parent queue, script on-up, dan lainnya), dengan nama persis seperti di Winbox. Hanya properti yang diubah yang dikirim.
+- **Semua Menu Router** (Sistem & Tools): katalog lebih dari 100 menu RouterOS v6/v7 (OVPN, L2TP, SSTP, WireGuard, Queue Tree, Firewall Raw, OSPF, BGP, IPv6, Netwatch, SNMP, dan lainnya), atau ketik path sendiri. Bisa tambah, ubah semua properti, aktif/nonaktif, dan hapus. Operator hanya bisa melihat; mengubah butuh peran Admin, dan menu yang bisa mengunci akses (User router, IP Service, Paket, Sertifikat, RouterBOARD, File) hanya untuk Super Admin.
 
 ## Portal login hotspot
 

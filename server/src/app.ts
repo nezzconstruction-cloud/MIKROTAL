@@ -26,6 +26,8 @@ import { hotspotRoutes } from './routes/hotspot.js';
 import { voucherRoutes } from './routes/vouchers.js';
 import { pppoeRoutes } from './routes/pppoe.js';
 import { portalRoutes } from './routes/portal.js';
+import { explorerRoutes } from './routes/explorer.js';
+import { syncRoutes } from './routes/sync.js';
 import { businessRoutes } from './routes/business.js';
 import { adminRoutes } from './routes/admin.js';
 import { publicRoutes } from './routes/public.js';
@@ -102,6 +104,8 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
     await voucherRoutes(api, ctx);
     await pppoeRoutes(api, ctx);
     await portalRoutes(api, ctx);
+    await explorerRoutes(api, ctx);
+    await syncRoutes(api, ctx);
     await businessRoutes(api, ctx);
     await adminRoutes(api, ctx);
   });
