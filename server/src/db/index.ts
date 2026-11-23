@@ -11,7 +11,10 @@ export type Params = Record<string, Value> | Value[];
 export class DB {
   readonly raw: DatabaseSync;
 
-  constructor(file: string) {
+  constructor(
+    file: string,
+    private readonly migrationList: { version: number; sql: string }[] = migrations,
+  ) {
     if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
     this.raw = new DatabaseSync(file);
     this.raw.exec('PRAGMA journal_mode = WAL;');
@@ -63,7 +66,7 @@ export class DB {
   private migrate() {
     this.raw.exec('CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)');
     const applied = new Set(this.all<{ version: number }>('SELECT version FROM schema_migrations').map((r) => r.version));
-    for (const m of migrations) {
+    for (const m of this.migrationList) {
       if (applied.has(m.version)) continue;
       this.transaction(() => {
         this.raw.exec(m.sql);

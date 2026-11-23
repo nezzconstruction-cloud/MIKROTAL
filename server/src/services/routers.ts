@@ -54,7 +54,18 @@ export class RouterManager {
     private readonly db: DB,
     private readonly box: SecretBox,
     private readonly dataDir?: string,
+    private readonly opts: {
+      /** Awalan kunci router simulasi, agar router simulasi tiap pelanggan cloud tidak tercampur. */
+      simKeyPrefix?: string;
+      /** Mode cloud: periksa & ubah alamat router menjadi IP yang boleh dihubungi sebelum tersambung. */
+      resolveHost?: (host: string) => Promise<string>;
+    } = {},
   ) {}
+
+  /** Alamat yang benar-benar dihubungi (mode cloud: hanya IP tunnel milik sendiri atau IP publik). */
+  async resolveHost(host: string, simulate: boolean) {
+    return simulate || !this.opts.resolveHost ? host : this.opts.resolveHost(host);
+  }
 
   list(): RouterRecord[] {
     return this.db.all<RouterRecord>('SELECT * FROM routers ORDER BY name COLLATE NOCASE');
@@ -72,7 +83,7 @@ export class RouterManager {
 
   createConnection(opts: ConnectOptions): RouterConnection {
     if (opts.simulate) {
-      return new SimulatedRouter(opts.key ?? `${opts.host}:${opts.port}`, opts.name ?? 'MikroTik-Sim', {
+      return new SimulatedRouter(`${this.opts.simKeyPrefix ?? ''}${opts.key ?? `${opts.host}:${opts.port}`}`, opts.name ?? 'MikroTik-Sim', {
         dataDir: opts.key ? this.dataDir : undefined,
         username: opts.username,
       });
@@ -88,8 +99,15 @@ export class RouterManager {
 
     const p = (async () => {
       const r = this.require(id);
+      let host: string;
+      try {
+        host = await this.resolveHost(r.host, !!r.simulate);
+      } catch (err) {
+        this.lastFailure.set(id, { at: Date.now(), error: err as Error });
+        throw new ConnectionError((err as Error).message);
+      }
       const conn = this.createConnection({
-        host: r.host,
+        host,
         port: r.port,
         username: r.username,
         password: this.box.decrypt(r.password_enc),
@@ -143,7 +161,7 @@ export class RouterManager {
   async uploadFiles(id: number, port: number, files: { path: string; data: Buffer }[]) {
     const r = this.require(id);
     if (r.simulate) return ((await this.connection(id)) as SimulatedRouter).ftpPut(files, port);
-    return ftpUpload({ host: r.host, port, user: r.username, password: this.box.decrypt(r.password_enc), timeoutMs: 15000 }, files);
+    return ftpUpload({ host: await this.resolveHost(r.host, false), port, user: r.username, password: this.box.decrypt(r.password_enc), timeoutMs: 15000 }, files);
   }
 
   isConnected(id: number) {
@@ -161,7 +179,8 @@ export class RouterManager {
   }
 
   async test(opts: ConnectOptions) {
-    const conn = this.createConnection({ ...opts, key: opts.simulate ? `test-${opts.host}` : undefined });
+    const host = await this.resolveHost(opts.host, opts.simulate);
+    const conn = this.createConnection({ ...opts, host, key: opts.simulate ? `test-${opts.host}` : undefined });
     const started = Date.now();
     await conn.connect();
     try {
