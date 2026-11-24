@@ -359,4 +359,21 @@ export const migrations: { version: number; sql: string }[] = [
       ALTER TABLE profile_meta ADD COLUMN lock_mac INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 8,
+    sql: `
+      -- Perbaikan impor Mikhmon lama yang menukar harga jual dengan harga modal: harga reseller tidak mungkin
+      -- lebih mahal dari harga pelanggan. Voucher hasil impor (tanpa batch) yang ikut harga lama disesuaikan.
+      UPDATE vouchers SET price = (
+        SELECT m.reseller_price FROM profile_meta m WHERE m.router_id = vouchers.router_id AND m.profile = vouchers.profile
+      )
+      WHERE batch_id IS NULL AND EXISTS (
+        SELECT 1 FROM profile_meta m
+        WHERE m.router_id = vouchers.router_id AND m.profile = vouchers.profile AND m.reseller_price > m.price AND vouchers.price = m.price
+      );
+      UPDATE profile_meta SET price = reseller_price, reseller_price = price WHERE reseller_price > price;
+      -- Sidik harga yang tertanam di portal login saat dipasang, untuk mendeteksi harga yang sudah berubah
+      ALTER TABLE hotspot_portals ADD COLUMN prices_sig TEXT;
+    `,
+  },
 ];

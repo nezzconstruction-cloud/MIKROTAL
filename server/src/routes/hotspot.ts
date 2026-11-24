@@ -108,6 +108,7 @@ export async function hotspotRoutes(app: FastifyInstance, ctx: AppContext) {
     await ctx.routers.exec(id, '/ip/hotspot/user/profile/add', rosParams(b, true));
     saveMeta(id, b);
     auditFrom(ctx, req, 'hotspot.profile.create', b.name, { routerId: id, price: b.price, validity: b.validity });
+    ctx.portal.schedulePriceRefresh(id, req.user.username);
     return { ok: true };
   });
 
@@ -124,6 +125,7 @@ export async function hotspotRoutes(app: FastifyInstance, ctx: AppContext) {
     }
     saveMeta(id, b);
     auditFrom(ctx, req, 'hotspot.profile.update', b.name, { routerId: id });
+    ctx.portal.schedulePriceRefresh(id, req.user.username);
     return { ok: true };
   });
 
@@ -135,6 +137,7 @@ export async function hotspotRoutes(app: FastifyInstance, ctx: AppContext) {
     if (found) await ctx.routers.exec(id, '/ip/hotspot/user/profile/remove', { '.id': found['.id'] });
     ctx.db.run('DELETE FROM profile_meta WHERE router_id = ? AND profile = ?', [id, name]);
     auditFrom(ctx, req, 'hotspot.profile.delete', name, { routerId: id });
+    ctx.portal.schedulePriceRefresh(id, req.user.username);
     return { ok: true };
   });
 

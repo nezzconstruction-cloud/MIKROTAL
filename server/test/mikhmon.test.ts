@@ -1,15 +1,22 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.js';
 import type { AppContext } from '../src/context.js';
 import { resetSimStores, SimulatedRouter } from '../src/lib/routeros/simulator.js';
 import { isExpiryScheduler, isMikhmonVoucher, parseMikhmonMeta, parseRouterDate } from '../src/lib/mikhmon.js';
 
-const ON_LOGIN = ':put (",rem,5000,1d,4000,,Disable,"); {:local date [ /system clock get date ];:local year [ :pick $date 7 11 ];:local month [ :pick $date 0 3 ];}';
+const ON_LOGIN = ':put (",rem,4000,1d,5000,,Disable,"); {:local date [ /system clock get date ];:local year [ :pick $date 7 11 ];:local month [ :pick $date 0 3 ];}';
 
 test('Mikhmon: metadata profil dan tanggal format lama & RouterOS 7.10+', () => {
+  // Mikhmon mencetak harga jual (kolom ke-4) bila tidak 0; harga modal yang lebih murah jadi harga reseller
   assert.deepEqual(parseMikhmonMeta(ON_LOGIN), { expMode: 'rem', price: 5000, validity: '1d', resellerPrice: 4000, lockUser: 'Disable' });
+  assert.deepEqual(parseMikhmonMeta(':put (",rem,5000,1d,4000,,Enable,");'), { expMode: 'rem', price: 4000, validity: '1d', resellerPrice: 0, lockUser: 'Enable' });
+  assert.deepEqual(parseMikhmonMeta(':put (",ntf,3000,1d,0,,Disable,");'), { expMode: 'ntf', price: 3000, validity: '1d', resellerPrice: 0, lockUser: 'Disable' });
+  assert.deepEqual(parseMikhmonMeta(':put (",,5000,,,noexp,Disable,");'), { expMode: 'noexp', price: 5000, validity: '', resellerPrice: 0, lockUser: 'Disable' });
   assert.equal(parseMikhmonMeta(':log info "halo"'), null);
   assert.equal(parseRouterDate('nov/30/2026 10:00:00', 420)!.toISOString(), '2026-11-30T03:00:00.000Z');
   assert.equal(parseRouterDate('2026-11-30 10:00:00', 420)!.toISOString(), '2026-11-30T03:00:00.000Z');
@@ -127,4 +134,23 @@ test('Mikhmon: deteksi, ambil alih dengan tanggal habis asli, lalu kembalikan sc
   assert.equal((await ex('/ip/hotspot/user/profile/print')).find((p) => p.name === 'MK1HARI')!['on-login'], onLoginLock);
   assert.equal((await ex('/system/scheduler/print')).find((s) => s.name === 'MK1HARI')!.disabled, 'false');
   assert.equal((await api('POST', `/api/routers/${routerId}/mikhmon/restore`)).status, 400);
+});
+
+test('migrasi 8: harga Mikhmon yang tertukar (harga reseller > harga pelanggan) diperbaiki', async () => {
+  const { DB } = await import('../src/db/index.js');
+  const { migrations } = await import('../src/db/migrations.js');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mk-mig-')), 'db.sqlite');
+  const old = new DB(file, migrations.filter((m) => m.version < 8));
+  const now = new Date().toISOString();
+  old.run("INSERT INTO routers (id, name, host, username, password_enc, created_at) VALUES (1, 'r', 'h', 'u', 'x', ?)", [now]);
+  old.run("INSERT INTO profile_meta (router_id, profile, price, reseller_price, validity) VALUES (1, 'TUKAR', 4000, 5000, '1d'), (1, 'BENAR', 5000, 4000, '1d')");
+  old.run("INSERT INTO vouchers (router_id, code, password, profile, price, created_at) VALUES (1, 'a1', 'a1', 'TUKAR', 4000, ?), (1, 'b1', 'b1', 'BENAR', 5000, ?)", [now, now]);
+  old.close();
+  const db = new DB(file, migrations);
+  const meta = (p: string) => db.get<any>('SELECT price, reseller_price FROM profile_meta WHERE profile = ?', [p]);
+  assert.deepEqual({ ...meta('TUKAR') }, { price: 5000, reseller_price: 4000 });
+  assert.deepEqual({ ...meta('BENAR') }, { price: 5000, reseller_price: 4000 });
+  assert.equal(db.get<any>("SELECT price FROM vouchers WHERE code = 'a1'").price, 5000);
+  assert.equal(db.get<any>("SELECT price FROM vouchers WHERE code = 'b1'").price, 5000);
+  db.close();
 });

@@ -93,6 +93,7 @@ export async function syncRoutes(app: FastifyInstance, ctx: AppContext) {
     const b = z.object({ disableScripts: z.boolean().default(true) }).parse(req.body ?? {});
     const r = await ctx.mikhmon.takeover(id, b);
     auditFrom(ctx, req, 'mikhmon.takeover', String(id), { ...r.imported, disableScripts: b.disableScripts });
+    ctx.portal.schedulePriceRefresh(id, req.user.username);
     return r;
   });
 

@@ -209,6 +209,20 @@ test('portal: pasang ke router, pasang ulang, gagal aman, kembalikan', async () 
   const state = (await api('GET', `/api/routers/${routerId}/portal`)).body.install;
   assert.equal(state.dir, 'flash/mikrotal-portal');
   assert.equal(state.by, 'admin');
+  assert.equal(state.pricesStale, false);
+
+  // harga diubah: pratinjau langsung memakai harga baru, portal di router ditandai lama lalu diperbarui
+  const hs = (await api('GET', `/api/routers/${routerId}/hotspot/profiles`)).body.find((p: any) => p.name === '1HARI');
+  const edit = await api('PUT', `/api/routers/${routerId}/hotspot/profiles/1HARI`, { name: '1HARI', rate_limit: hs['rate-limit'] ?? '', price: 6500, validity: hs.meta.validity });
+  assert.equal(edit.status, 200, JSON.stringify(edit.body));
+  const fresh = await api('GET', `/api/routers/${routerId}/portal`);
+  assert.equal(fresh.body.prices.find((p: any) => p.profile === '1HARI').price, 6500);
+  assert.equal(fresh.body.install.pricesStale, true);
+  assert.doesNotMatch(conn.readFile('flash/mikrotal-portal/login.html')!, /Rp\s6\.500/);
+  assert.equal(await ctx.portal.refreshPrices(routerId, 'admin'), true);
+  assert.match(conn.readFile('flash/mikrotal-portal/login.html')!, /Rp\s6\.500/);
+  assert.equal((await api('GET', `/api/routers/${routerId}/portal`)).body.install.pricesStale, false);
+  assert.equal(await ctx.portal.refreshPrices(routerId, 'admin'), null, 'tidak dipasang ulang bila harga tidak berubah');
 
   const back = await api('POST', `/api/routers/${routerId}/portal/rollback`);
   assert.equal(back.status, 200);
