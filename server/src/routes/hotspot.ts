@@ -76,6 +76,12 @@ export async function hotspotRoutes(app: FastifyInstance, ctx: AppContext) {
     });
   });
 
+  /** Diperiksa sebelum router diubah. */
+  const checkPrices = (b: z.infer<typeof profileSchema>) => {
+    if (b.price > 0 && b.reseller_price > b.price) throw new HttpError(400, 'Harga reseller tidak boleh lebih mahal dari harga jual ke pelanggan');
+    return b;
+  };
+
   const saveMeta = (routerId: number, b: z.infer<typeof profileSchema>) => {
     const lockMac = b.lock_mac === undefined ? null : b.lock_mac ? 1 : 0;
     ctx.db.run(
@@ -104,17 +110,18 @@ export async function hotspotRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.post('/api/routers/:id/hotspot/profiles', { preHandler: auth('hotspot.write') }, async (req) => {
     const id = rid((req.params as any).id);
-    const b = profileSchema.parse(req.body);
+    const b = checkPrices(profileSchema.parse(req.body));
     await ctx.routers.exec(id, '/ip/hotspot/user/profile/add', rosParams(b, true));
     saveMeta(id, b);
     auditFrom(ctx, req, 'hotspot.profile.create', b.name, { routerId: id, price: b.price, validity: b.validity });
+    ctx.portal.schedulePriceRefresh(id, req.user.username);
     return { ok: true };
   });
 
   app.put('/api/routers/:id/hotspot/profiles/:name', { preHandler: auth('hotspot.write') }, async (req) => {
     const id = rid((req.params as any).id);
     const oldName = String((req.params as any).name);
-    const b = profileSchema.parse(req.body);
+    const b = checkPrices(profileSchema.parse(req.body));
     const [found] = await ctx.routers.exec(id, '/ip/hotspot/user/profile/print', {}, [`?name=${oldName}`]);
     if (!found) throw new HttpError(404, 'Profil tidak ditemukan di router');
     await ctx.routers.exec(id, '/ip/hotspot/user/profile/set', { '.id': found['.id'], ...rosParams(b, false) });
@@ -124,6 +131,7 @@ export async function hotspotRoutes(app: FastifyInstance, ctx: AppContext) {
     }
     saveMeta(id, b);
     auditFrom(ctx, req, 'hotspot.profile.update', b.name, { routerId: id });
+    ctx.portal.schedulePriceRefresh(id, req.user.username);
     return { ok: true };
   });
 
@@ -135,6 +143,7 @@ export async function hotspotRoutes(app: FastifyInstance, ctx: AppContext) {
     if (found) await ctx.routers.exec(id, '/ip/hotspot/user/profile/remove', { '.id': found['.id'] });
     ctx.db.run('DELETE FROM profile_meta WHERE router_id = ? AND profile = ?', [id, name]);
     auditFrom(ctx, req, 'hotspot.profile.delete', name, { routerId: id });
+    ctx.portal.schedulePriceRefresh(id, req.user.username);
     return { ok: true };
   });
 

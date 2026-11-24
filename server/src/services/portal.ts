@@ -22,6 +22,7 @@ export interface PortalRecord {
   base_url: string | null;
   installed_at: string | null;
   installed_by: string | null;
+  prices_sig: string | null;
 }
 
 export interface InstallOptions {
@@ -42,7 +43,11 @@ export function portalDirFor(current: string) {
 
 export class PortalService {
   private tokens = new Map<string, { files: Map<string, { data: Buffer; type: string }>; expires: number }>();
-  private priceCache = new Map<number, { at: number; items: PriceItem[] }>();
+  /** Kecepatan (rate-limit) profil dari router, disimpan sebentar. Harga selalu dibaca langsung dari database. */
+  private rateCache = new Map<number, { at: number; rate: Map<string, string> }>();
+  private refreshTimers = new Map<number, NodeJS.Timeout>();
+  /** Hasil pembaruan harga otomatis terakhir per router (untuk ditampilkan di halaman portal). */
+  private lastRefresh = new Map<number, { at: string; ok: boolean; message: string }>();
 
   constructor(
     private readonly db: DB,
@@ -74,27 +79,83 @@ export class PortalService {
   installState(routerId: number) {
     const r = this.record(routerId);
     if (!r?.installed_dir) return null;
-    return { profile: r.profile, dir: r.installed_dir, previousDir: r.previous_dir, baseUrl: r.base_url, at: r.installed_at, by: r.installed_by };
+    return {
+      profile: r.profile,
+      dir: r.installed_dir,
+      previousDir: r.previous_dir,
+      baseUrl: r.base_url,
+      at: r.installed_at,
+      by: r.installed_by,
+      pricesStale: this.pricesStale(routerId, r),
+      autoRefresh: this.lastRefresh.get(routerId) ?? null,
+    };
   }
 
-  /** Daftar harga dari profil hotspot di router + harga yang disimpan MIKROTAL. Router mati → pakai data tersimpan saja. */
+  private priceMetas(routerId: number) {
+    return this.db.all<any>('SELECT * FROM profile_meta WHERE router_id = ? AND price > 0 ORDER BY price, profile', [routerId]);
+  }
+
+  /** Sidik harga yang tampil di portal (harga, masa aktif, batas, warna per profil), tanpa perlu menghubungi router. */
+  pricesSig(routerId: number) {
+    const rows = this.priceMetas(routerId).map((m) => [m.profile, m.price, m.validity, m.time_limit, m.data_limit, m.color]);
+    return crypto.createHash('sha1').update(JSON.stringify(rows)).digest('hex');
+  }
+
+  /** Portal terpasang memuat harga lama: harga di MIKROTAL sudah diubah sejak terakhir dipasang. */
+  private pricesStale(routerId: number, r = this.record(routerId)) {
+    if (!r?.installed_dir) return false;
+    // dipasang oleh versi lama (sidik belum dicatat): harga di router tidak bisa dipastikan sama
+    return r.prices_sig !== this.pricesSig(routerId);
+  }
+
+  /** Daftar harga dari harga yang disimpan MIKROTAL + kecepatan profil di router. Router mati → tanpa kecepatan. */
   async prices(routerId: number): Promise<PriceItem[]> {
-    const cached = this.priceCache.get(routerId);
-    if (cached && Date.now() - cached.at < 30_000) return cached.items;
-    const metas = this.db.all<any>('SELECT * FROM profile_meta WHERE router_id = ?', [routerId]);
-    let rate = new Map<string, string>();
-    try {
-      const profiles = await this.routers.exec(routerId, '/ip/hotspot/user/profile/print', { '.proplist': 'name,rate-limit' });
-      rate = new Map(profiles.map((p) => [p.name, p['rate-limit'] ?? '']));
-    } catch {
-      /* router tidak terjangkau: kecepatan tidak ditampilkan */
+    let cached = this.rateCache.get(routerId);
+    if (!cached || Date.now() - cached.at > 30_000) {
+      let rate = new Map<string, string>();
+      try {
+        const profiles = await this.routers.exec(routerId, '/ip/hotspot/user/profile/print', { '.proplist': 'name,rate-limit' });
+        rate = new Map(profiles.map((p) => [p.name, p['rate-limit'] ?? '']));
+      } catch {
+        /* router tidak terjangkau: kecepatan tidak ditampilkan */
+      }
+      cached = { at: Date.now(), rate };
+      if (rate.size) this.rateCache.set(routerId, cached);
     }
-    const items = metas
-      .filter((m) => m.price > 0 && (rate.size === 0 || rate.has(m.profile)))
-      .sort((a, b) => a.price - b.price)
+    const rate = cached.rate;
+    return this.priceMetas(routerId)
+      .filter((m) => rate.size === 0 || rate.has(m.profile))
       .map((m) => ({ profile: m.profile, price: m.price, validity: m.validity, timeLimit: m.time_limit, dataLimit: m.data_limit, speed: speedText(rate.get(m.profile) ?? ''), color: m.color }));
-    this.priceCache.set(routerId, { at: Date.now(), items });
-    return items;
+  }
+
+  /**
+   * Harga profil berubah: perbarui portal yang sudah terpasang di router agar halaman login ikut menampilkan harga baru.
+   * Ditunda sebentar supaya beberapa perubahan beruntun cukup dipasang sekali.
+   */
+  schedulePriceRefresh(routerId: number, actor: string, delayMs = 3000) {
+    this.rateCache.delete(routerId);
+    const r = this.record(routerId);
+    if (!r?.installed_dir || !r.profile || !r.base_url) return;
+    clearTimeout(this.refreshTimers.get(routerId));
+    const t = setTimeout(() => {
+      this.refreshTimers.delete(routerId);
+      this.refreshPrices(routerId, actor).catch(() => undefined);
+    }, delayMs);
+    t.unref?.();
+    this.refreshTimers.set(routerId, t);
+  }
+
+  async refreshPrices(routerId: number, actor: string) {
+    const r = this.record(routerId);
+    if (!r?.installed_dir || !r.profile || !r.base_url || !this.pricesStale(routerId, r)) return null;
+    try {
+      await this.install(routerId, { profile: r.profile, baseUrl: r.base_url, allowWhatsapp: false, method: 'auto' }, actor);
+      this.lastRefresh.set(routerId, { at: new Date().toISOString(), ok: true, message: 'Harga baru sudah dipasang di halaman login router' });
+      return true;
+    } catch (err) {
+      this.lastRefresh.set(routerId, { at: new Date().toISOString(), ok: false, message: (err as Error).message });
+      return false;
+    }
   }
 
   async context(routerId: number, config: PortalConfig, baseUrl: string, inlineAssets = false): Promise<RenderContext> {
@@ -157,6 +218,7 @@ export class PortalService {
     // pasang ulang: folder asal tetap yang tercatat saat pemasangan pertama
     const previous = current === target ? rec?.previous_dir || 'hotspot' : current;
 
+    const pricesSig = this.pricesSig(routerId);
     const files = renderPortalFiles(await this.context(routerId, config, baseUrl));
     const token = this.registerFiles(files);
     const steps: string[] = [];
@@ -248,15 +310,11 @@ export class PortalService {
     }
 
     const now = new Date().toISOString();
-    this.db.run('UPDATE hotspot_portals SET profile = ?, installed_dir = ?, previous_dir = ?, base_url = ?, installed_at = ?, installed_by = ? WHERE router_id = ?', [
-      opts.profile,
-      target,
-      previous,
-      baseUrl,
-      now,
-      actor,
-      routerId,
-    ]);
+    this.db.run(
+      'UPDATE hotspot_portals SET profile = ?, installed_dir = ?, previous_dir = ?, base_url = ?, installed_at = ?, installed_by = ?, prices_sig = ? WHERE router_id = ?',
+      [opts.profile, target, previous, baseUrl, now, actor, pricesSig, routerId],
+    );
+    this.lastRefresh.delete(routerId);
     return { dir: target, previousDir: previous, files: files.map((f) => ({ name: f.name, size: f.data.length })), steps, warnings };
   }
 

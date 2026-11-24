@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Download, ImagePlus, LayoutTemplate, Monitor, Plus, RotateCcw, Save, Smartphone, Tablet, Trash2, Upload, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Download, ImagePlus, LayoutTemplate, Monitor, Plus, RotateCcw, Save, Smartphone, Tablet, Trash2, Upload, X } from 'lucide-react';
 import clsx from 'clsx';
 import { ApiError, download, get, post, put } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -45,7 +45,16 @@ interface PortalConfig {
 }
 interface PortalData {
   config: PortalConfig;
-  install: { profile: string; dir: string; previousDir: string; baseUrl: string; at: string; by: string } | null;
+  install: {
+    profile: string;
+    dir: string;
+    previousDir: string;
+    baseUrl: string;
+    at: string;
+    by: string;
+    pricesStale: boolean;
+    autoRefresh: { at: string; ok: boolean; message: string } | null;
+  } | null;
   hotspot: { servers: { name: string; interface: string; profile: string; disabled: boolean }[]; profiles: { name: string; htmlDirectory: string; dnsName: string }[] } | { error: string };
   baseUrl: string;
   prices: { profile: string; price: number; validity: string; speed: string }[];
@@ -275,6 +284,26 @@ function Preview({ routerId, config, baseUrl }: { routerId: number; config: Port
   );
 }
 
+/** Harga di Profil & Harga sudah berubah, tetapi halaman login di router masih memuat harga lama. */
+function StalePrices({ info }: { info: { at: string; ok: boolean; message: string } | null }) {
+  return (
+    <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
+      <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">Harga di halaman login router belum diperbarui</p>
+        <p className="text-xs text-muted">
+          Harga di Hotspot › Profil & Harga berubah sejak portal terakhir dipasang, jadi pelanggan masih melihat harga lama. Klik <b>Pasang ulang ke router</b> di bawah.
+        </p>
+        {info && !info.ok && (
+          <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
+            Pembaruan otomatis {formatDate(info.at)} gagal: {info.message}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function InstallPanel({ routerId, data, config, dirty, onInstalled }: { routerId: number; data: PortalData; config: PortalConfig; dirty: boolean; onInstalled: () => void }) {
   const { can } = useAuth();
   const { confirm, toast } = useFeedback();
@@ -337,6 +366,7 @@ function InstallPanel({ routerId, data, config, dirty, onInstalled }: { routerId
       ) : (
         <p className="rounded-xl border border-line bg-surface-2 p-3 text-xs text-muted">Belum dipasang. Router masih memakai halaman login lamanya.</p>
       )}
+      {data.install?.pricesStale && <StalePrices info={data.install.autoRefresh} />}
       {!hs.profiles.length ? (
         <p className="text-sm text-muted">Router ini belum punya server hotspot. Buat dulu lewat menu Hotspot › Server Hotspot.</p>
       ) : (
@@ -481,6 +511,7 @@ function Editor({ routerId, data }: { routerId: number; data: PortalData }) {
         actions={
           <>
             {data.install ? <Badge tone="green">Terpasang • {data.install.profile}</Badge> : <Badge>Belum dipasang</Badge>}
+            {data.install?.pricesStale && <Badge tone="yellow">Harga di router belum diperbarui</Badge>}
             {write && (
               <Button variant={dirty ? 'primary' : 'secondary'} icon={<Save className="size-4" />} loading={busy} disabled={!dirty} onClick={save}>
                 {dirty ? 'Simpan' : 'Tersimpan'}

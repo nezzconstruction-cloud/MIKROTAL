@@ -1,16 +1,19 @@
 /**
  * Membaca jejak Mikhmon di router: metadata profil di script on-login dan tanggal habis di komentar user.
  *
- * Mikhmon menyimpan data profil di awal on-login sebagai  :put (",rem,5000,1d,4000,,Disable,");
- * (mode kedaluwarsa, harga, masa aktif, harga jual reseller, ..., kunci user), lalu saat voucher pertama
+ * Mikhmon menyimpan data profil di awal on-login sebagai  :put (",rem,4000,1d,5000,,Disable,");
+ * (mode kedaluwarsa, harga, masa aktif, harga jual, ..., kunci user), lalu saat voucher pertama
  * dipakai, komentar user diganti tanggal habis, mis. "nov/30/2026 10:00:00" (RouterOS < 7.10) atau
  * "2026-11-30 10:00:00" (7.10+). Script Mikhmon yang membaca format lama rusak di 7.10+.
+ * Profil tanpa masa aktif ditulis  :put (",,5000,,,noexp,Disable,").
  */
 
 export interface MikhmonMeta {
   expMode: string;
+  /** Harga untuk pelanggan: harga jual Mikhmon bila diisi, selain itu harga. */
   price: number;
   validity: string;
+  /** Harga modal reseller: kolom "Price" Mikhmon bila harga jual diisi dan lebih murah. */
   resellerPrice: number;
   lockUser: string;
 }
@@ -23,11 +26,14 @@ export function parseMikhmonMeta(onLogin: string | undefined): MikhmonMeta | nul
     const n = Number(String(s ?? '').replace(/[^0-9.]/g, ''));
     return Number.isFinite(n) ? n : 0;
   };
+  const base = num(f[1]);
+  const sell = num(f[3]);
+  // Mikhmon mencetak harga jual di voucher bila tidak 0; kolom "Price" hanya dipakai bila harga jual kosong
   return {
-    expMode: (f[0] ?? '').trim(),
-    price: num(f[1]),
+    expMode: (f[4] ?? '').trim() === 'noexp' ? 'noexp' : (f[0] ?? '').trim(),
+    price: sell > 0 ? sell : base,
     validity: /^(\d+[wdhms])+$/i.test((f[2] ?? '').trim()) ? f[2].trim().toLowerCase() : '',
-    resellerPrice: num(f[3]),
+    resellerPrice: sell > 0 && base > 0 && base < sell ? base : 0,
     lockUser: (f[5] ?? '').trim(),
   };
 }
