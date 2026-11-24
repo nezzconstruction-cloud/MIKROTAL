@@ -158,7 +158,17 @@ CHR juga bisa dijalankan sebagai VM (KVM) di server aplikasi bila VPS mendukung 
 ### 4.3 Langkah
 
 1. **Siapkan CHR dan sambungkan ke server aplikasi:** ikuti [deploy/cloud/chr-link.md](../deploy/cloud/chr-link.md).
-2. **Jalankan aplikasi di server aplikasi:**
+2. **Jalankan aplikasi di server aplikasi.** Cara cepat (Ubuntu/Debian, sebagai root): skrip pemasang memasang Docker, mengambil kode ke `/opt/mikrotal`, membuat `.env` (APP_SECRET acak), memeriksa port 80/443, lalu menyalakan aplikasi + Caddy. Belum punya domain? Tekan Enter saat ditanya domain untuk memakai domain uji `<ip>.sslip.io`.
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/nezzconstruction-cloud/MIKROTAL/main/deploy/cloud/install.sh -o install.sh
+   ```
+
+   ```bash
+   bash install.sh
+   ```
+
+   Atau manual:
 
    ```bash
    git clone https://github.com/nezzconstruction-cloud/MIKROTAL.git
