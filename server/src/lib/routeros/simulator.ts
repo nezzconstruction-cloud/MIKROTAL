@@ -162,6 +162,10 @@ function createInitialState(identity: string): SimState {
       { name: 'dhcp-hotspot', interface: 'bridge-hotspot', 'address-pool': 'hs-pool', 'lease-time': '1h' },
       { name: 'dhcp-lan', interface: 'ether2-LAN', 'address-pool': 'dhcp-lan', 'lease-time': '1d' },
     ]),
+    '/ip/dhcp-server/network': mk([
+      { address: '10.5.50.0/24', gateway: '10.5.50.1', 'dns-server': '10.5.50.1' },
+      { address: '192.168.88.0/24', gateway: '192.168.88.1', 'dns-server': '192.168.88.1' },
+    ]),
     '/ip/dhcp-server/lease': mk(
       Array.from({ length: 8 }, (_, i) => ({
         address: i < 5 ? `10.5.50.${20 + i}` : `192.168.88.${50 + i}`,

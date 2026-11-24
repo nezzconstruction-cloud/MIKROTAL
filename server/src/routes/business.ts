@@ -95,6 +95,22 @@ export function salesReport(ctx: AppContext, opts: { from: string; to: string; r
     [start, end, ...rp, ...resP],
   );
   resellerSales.push(...pppResellerSales);
+  // Refund saat batch reseller dihapus: dikurangkan pada tanggal refund
+  for (const [table, profile] of [
+    ['voucher_batches', 'b.profile'],
+    ['ppp_voucher_batches', "'PPPoE ' || b.package_name"],
+  ] as const) {
+    resellerSales.push(
+      ...ctx.db.all<any>(
+        `SELECT t.created_at, -t.amount AS cost, -CAST(ROUND(t.amount * b.qty / b.cost) AS INTEGER) AS qty, ${profile} AS profile, b.router_id,
+           r.name AS router_name, rs.name AS reseller_name, b.reseller_id
+         FROM reseller_tx t JOIN ${table} b ON b.code = t.ref AND b.reseller_id = t.reseller_id
+         LEFT JOIN routers r ON r.id = b.router_id LEFT JOIN resellers rs ON rs.id = b.reseller_id
+         WHERE t.type = 'refund' AND b.cost > 0 AND b.qty > 0 AND t.created_at >= ? AND t.created_at < ?${bf}${brf}`,
+        [start, end, ...rp, ...resP],
+      ),
+    );
+  }
 
   const days: Record<string, { date: string; direct: number; reseller: number; pppoe: number; count: number }> = {};
   for (let d = opts.from; d <= opts.to; d = addDays(d, 1)) days[d] = { date: d, direct: 0, reseller: 0, pppoe: 0, count: 0 };

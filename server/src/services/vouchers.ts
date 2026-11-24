@@ -179,6 +179,7 @@ export class VoucherService {
       reseller = this.db.get('SELECT * FROM resellers WHERE id = ?', [opts.resellerId]);
       if (!reseller) throw new HttpError(404, 'Reseller tidak ditemukan');
       if (!reseller.active) throw new HttpError(400, 'Reseller nonaktif');
+      if (!(price > 0)) throw new HttpError(400, `Profil "${opts.profile}" belum diberi harga, jadi tidak bisa dijual lewat reseller`);
       unitCost = meta?.reseller_price && meta.reseller_price > 0 ? meta.reseller_price : price * (1 - (reseller.discount || 0) / 100);
       const total = unitCost * opts.qty;
       if (total > reseller.balance + 1e-6) {
@@ -236,8 +237,9 @@ export class VoucherService {
         );
       }
       if (reseller && totalCost > 0) {
-        const balance = reseller.balance - totalCost;
-        this.db.run('UPDATE resellers SET balance = ? WHERE id = ?', [balance, reseller.id]);
+        // Saldo dibaca ulang: selama voucher dibuat di router bisa ada top up atau pembelian lain
+        this.db.run('UPDATE resellers SET balance = balance - ? WHERE id = ?', [totalCost, reseller.id]);
+        const balance = this.db.get<{ balance: number }>('SELECT balance FROM resellers WHERE id = ?', [reseller.id])!.balance;
         this.db.run(
           `INSERT INTO reseller_tx (reseller_id, type, amount, balance_after, ref, note, created_by, created_at) VALUES (?, 'purchase', ?, ?, ?, ?, ?, ?)`,
           [reseller.id, -totalCost, balance, batchCode, `${ok.length} voucher ${opts.profile}`, actor, now],
@@ -423,7 +425,7 @@ export class VoucherService {
   }
 
   async deleteBatch(batchId: number, opts: { refund: boolean; actor: string }) {
-    const batch = this.db.get<any>('SELECT * FROM voucher_batches WHERE id = ?', [batchId]);
+    const batch = this.db.get<any>('SELECT * FROM voucher_batches WHERE id = ? AND deleted_at IS NULL', [batchId]);
     if (!batch) throw new HttpError(404, 'Batch tidak ditemukan');
     const vouchers = this.db.all<VoucherRow>('SELECT * FROM vouchers WHERE batch_id = ?', [batchId]);
     await this.removeFromRouter(
@@ -448,7 +450,10 @@ export class VoucherService {
           }
         }
       }
-      this.db.run('DELETE FROM voucher_batches WHERE id = ?', [batchId]);
+      // Voucher yang sudah terjual tetap disimpan (status dihapus) agar pendapatannya tetap di laporan
+      this.db.run('DELETE FROM vouchers WHERE batch_id = ? AND activated_at IS NULL', [batchId]);
+      this.db.run(`UPDATE vouchers SET status = 'removed' WHERE batch_id = ? AND status != 'expired'`, [batchId]);
+      this.db.run('UPDATE voucher_batches SET deleted_at = ? WHERE id = ?', [new Date().toISOString(), batchId]);
     });
     return { removed: vouchers.length };
   }

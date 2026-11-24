@@ -128,6 +128,8 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
     await businessRoutes(api, ctx);
     await adminRoutes(api, ctx);
     if (cloud) await cloudRoutes(api, ctx);
+    // Instalasi sendiri: tidak ada langganan (dibaca web untuk menyembunyikan menu Langganan tanpa error 404)
+    else api.get('/api/cloud/subscription', async () => null);
   });
 
   // Sajikan frontend hasil build (web/dist) bila ada

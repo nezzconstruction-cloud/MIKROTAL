@@ -361,7 +361,7 @@ export async function pppoeRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.get('/api/pppoe/vouchers/batches', { preHandler: auth('voucher.view') }, async (req) => {
     const q = req.query as Record<string, string>;
-    const where: string[] = [];
+    const where: string[] = ['b.deleted_at IS NULL'];
     const params: any[] = [];
     const own = scope(req);
     if (own !== undefined) {
@@ -388,7 +388,7 @@ export async function pppoeRoutes(app: FastifyInstance, ctx: AppContext) {
     const own = scope(req);
     let rows: any[] = [];
     if (q.batchId) {
-      const batch = ctx.db.get<any>('SELECT * FROM ppp_voucher_batches WHERE id = ?', [Number(q.batchId)]);
+      const batch = ctx.db.get<any>('SELECT * FROM ppp_voucher_batches WHERE id = ? AND deleted_at IS NULL', [Number(q.batchId)]);
       if (!batch || (own !== undefined && batch.reseller_id !== own)) throw new HttpError(404, 'Batch tidak ditemukan');
       rows = ctx.db.all(`SELECT * FROM ppp_vouchers WHERE batch_id = ? ${q.onlyUnused === '1' ? `AND status = 'unused'` : ''} ORDER BY id`, [batch.id]);
     } else if (q.ids) {
