@@ -491,15 +491,20 @@ export class PppoeService {
       const nowIso = new Date(now).toISOString();
       let changed = false;
 
-      for (const c of customers) {
+      for (const listed of customers) {
+        // Dibaca ulang: selama sinkronisasi menunggu router, admin bisa memperpanjang/mengubah/menghapus pelanggan
+        const c = this.db.get<CustomerRow>('SELECT * FROM customers WHERE id = ?', [listed.id]);
+        if (!c) continue;
         const secret = secretMap.get(c.username);
         let a = activeMap.get(c.username);
         if (c.status === 'active' && c.expires_at && Date.parse(c.expires_at) <= now) {
-          c.status = 'isolated';
-          this.db.run(`UPDATE customers SET status = 'isolated' WHERE id = ?`, [c.id]);
-          this.tx(c, { type: 'isolate', note: 'Masa aktif habis', before: c.expires_at, actor: 'sistem' });
-          stats.isolated++;
-          changed = true;
+          const r = this.db.run(`UPDATE customers SET status = 'isolated' WHERE id = ? AND status = 'active' AND expires_at = ?`, [c.id, c.expires_at]);
+          if (r.changes === 1) {
+            c.status = 'isolated';
+            this.tx(c, { type: 'isolate', note: 'Masa aktif habis', before: c.expires_at, actor: 'sistem' });
+            stats.isolated++;
+            changed = true;
+          }
         }
         if (!secret) stats.missing++;
         else {
@@ -697,6 +702,7 @@ export class PppoeService {
       reseller = this.db.get('SELECT * FROM resellers WHERE id = ?', [opts.resellerId]);
       if (!reseller) throw new HttpError(404, 'Reseller tidak ditemukan');
       if (!reseller.active) throw new HttpError(400, 'Reseller nonaktif');
+      if (!(pkg.price > 0)) throw new HttpError(400, `Paket "${pkg.name}" belum diberi harga, jadi tidak bisa dijual lewat reseller`);
       unitCost = pkg.reseller_price > 0 ? pkg.reseller_price : pkg.price * (1 - (reseller.discount || 0) / 100);
       const total = unitCost * opts.qty;
       if (total > reseller.balance + 1e-6) {
@@ -743,7 +749,7 @@ export class PppoeService {
 
   /** Hapus batch: voucher yang belum dipakai ikut terhapus, yang sudah dipakai tetap tercatat di riwayat pelanggan. */
   deleteBatch(batchId: number, opts: { refund: boolean; actor: string }) {
-    const batch = this.db.get<any>('SELECT * FROM ppp_voucher_batches WHERE id = ?', [batchId]);
+    const batch = this.db.get<any>('SELECT * FROM ppp_voucher_batches WHERE id = ? AND deleted_at IS NULL', [batchId]);
     if (!batch) throw new HttpError(404, 'Batch tidak ditemukan');
     return this.db.transaction(() => {
       const unused = this.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ppp_vouchers WHERE batch_id = ? AND status = 'unused'`, [batchId])!.n;
@@ -760,8 +766,8 @@ export class PppoeService {
         }
       }
       this.db.run(`DELETE FROM ppp_vouchers WHERE batch_id = ? AND status = 'unused'`, [batchId]);
-      this.db.run('UPDATE ppp_vouchers SET batch_id = NULL WHERE batch_id = ?', [batchId]);
-      this.db.run('DELETE FROM ppp_voucher_batches WHERE id = ?', [batchId]);
+      // Batch disembunyikan, bukan dihapus: pembelian reseller yang sudah terjadi tetap ada di laporan
+      this.db.run('UPDATE ppp_voucher_batches SET deleted_at = ? WHERE id = ?', [new Date().toISOString(), batchId]);
       return { removed: unused };
     });
   }

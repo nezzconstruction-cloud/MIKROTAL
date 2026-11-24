@@ -174,6 +174,15 @@ test('reseller: saldo terpotong, akun reseller hanya melihat miliknya, refund', 
   assert.equal(gen.body.batch.cost, 4 * 2500, 'harga reseller dari profil');
   assert.equal(gen.body.batch.price, 3000, 'reseller tidak bisa mengubah harga');
 
+  // reseller tidak bisa memperpanjang voucher murah atau membuat voucher dari profil tanpa harga
+  const stretch = await api('POST', '/api/vouchers/generate', { routerId, profile: '1JAM', qty: 1, validity: '365d', timeLimit: '', dataLimit: 0 }, rt);
+  assert.equal(stretch.status, 200, JSON.stringify(stretch.body));
+  assert.deepEqual([stretch.body.batch.validity, stretch.body.batch.time_limit], ['1d', '1h'], 'batas dari Profil & Harga');
+  const free = await api('POST', '/api/vouchers/generate', { routerId, profile: 'default', qty: 1 }, rt);
+  assert.equal(free.status, 400);
+  assert.match(free.body.error, /belum diberi harga/);
+  await api('DELETE', `/api/vouchers/batches/${stretch.body.batch.id}?refund=1`);
+
   const after = await api('GET', '/api/resellers', undefined, rt);
   assert.equal(after.body.length, 1);
   assert.equal(after.body[0].balance, 300000 - 10000);
@@ -187,10 +196,48 @@ test('reseller: saldo terpotong, akun reseller hanya melihat miliknya, refund', 
   assert.equal(tooMuch.status, 400);
   assert.match(tooMuch.body.error, /Saldo/);
 
+  const salesBefore = (await api('GET', '/api/reports/sales')).body.totals.reseller;
   const del = await api('DELETE', `/api/vouchers/batches/${gen.body.batch.id}?refund=1`);
   assert.equal(del.status, 200);
   const refunded = await api('GET', '/api/resellers');
   assert.equal(refunded.body[0].balance, 300000);
+  assert.equal((await api('GET', '/api/reports/sales')).body.totals.reseller, salesBefore - 10000, 'refund dikurangkan dari penjualan reseller');
+  assert.ok(!(await api('GET', '/api/vouchers/batches')).body.some((b: any) => b.id === gen.body.batch.id), 'batch terhapus tidak tampil');
+  assert.equal((await api('DELETE', `/api/vouchers/batches/${gen.body.batch.id}?refund=1`)).status, 404, 'tidak bisa direfund dua kali');
+
+  // top up masuk saat voucher sedang dibuat di router: saldo tidak boleh tertimpa
+  const exec = ctx.routers.exec.bind(ctx.routers);
+  let topped = false;
+  (ctx.routers as any).exec = async (id: number, cmd: string, ...rest: any[]) => {
+    if (cmd === '/ip/hotspot/user/add' && !topped) {
+      topped = true;
+      await api('POST', `/api/resellers/${r.id}/balance`, { type: 'topup', amount: 7000, note: 'bersamaan' });
+    }
+    return (exec as any)(id, cmd, ...rest);
+  };
+  try {
+    const g2 = await api('POST', '/api/vouchers/generate', { routerId, profile: '1JAM', qty: 2 }, rt);
+    assert.equal(g2.status, 200, JSON.stringify(g2.body));
+  } finally {
+    (ctx.routers as any).exec = exec;
+  }
+  assert.equal((await api('GET', '/api/resellers')).body[0].balance, 300000 + 7000 - 2 * 2500);
+  const tx = ctx.db.get<any>("SELECT balance_after FROM reseller_tx WHERE type = 'purchase' ORDER BY id DESC LIMIT 1");
+  assert.equal(tx.balance_after, 300000 + 7000 - 2 * 2500);
+});
+
+test('hapus batch voucher langsung: voucher yang sudah terjual tetap di laporan', async () => {
+  const gen = await api('POST', '/api/vouchers/generate', { routerId, profile: '1HARI', qty: 3 });
+  assert.equal(gen.status, 200, JSON.stringify(gen.body));
+  const [sold] = ctx.db.all<any>('SELECT * FROM vouchers WHERE batch_id = ? ORDER BY id', [gen.body.batch.id]);
+  ctx.db.run(`UPDATE vouchers SET status = 'used', activated_at = ? WHERE id = ?`, [new Date().toISOString(), sold.id]);
+  const before = (await api('GET', '/api/reports/sales')).body.totals.direct;
+  assert.equal((await api('DELETE', `/api/vouchers/batches/${gen.body.batch.id}`)).status, 200);
+  assert.equal((await api('GET', '/api/reports/sales')).body.totals.direct, before);
+  const left = ctx.db.all<any>('SELECT code, status FROM vouchers WHERE batch_id = ?', [gen.body.batch.id]);
+  assert.deepEqual(left.map((x) => ({ ...x })), [{ code: sold.code, status: 'removed' }], 'hanya voucher terjual yang disimpan');
+  // bersihkan supaya tes laporan berikutnya tidak ikut menghitung penjualan ini
+  ctx.db.run('DELETE FROM vouchers WHERE batch_id = ?', [gen.body.batch.id]);
 });
 
 test('hak akses operator', async () => {
@@ -363,6 +410,27 @@ test('PPPoE: masa aktif habis → diisolir, voucher → aktif kembali dan masa a
   const rep = await api('GET', '/api/reports/sales');
   assert.equal(rep.body.totals.pppoe, 200000);
   assert.equal(rep.body.totals.direct, 3000, 'penjualan hotspot tidak berubah');
+});
+
+test('PPPoE: pelanggan diperpanjang saat sinkronisasi berjalan tidak ikut diisolir', async () => {
+  const past = new Date(Date.now() - 60_000).toISOString();
+  const future = new Date(Date.now() + 30 * 86400_000).toISOString();
+  ctx.db.run(`UPDATE customers SET status = 'active', expires_at = ? WHERE id = ?`, [past, custId]);
+  const exec = ctx.routers.exec.bind(ctx.routers);
+  (ctx.routers as any).exec = async (id: number, cmd: string, ...rest: any[]) => {
+    const out = await (exec as any)(id, cmd, ...rest);
+    // admin memperpanjang tepat ketika sinkronisasi sedang menunggu jawaban router
+    if (cmd === '/ppp/active/print') ctx.db.run('UPDATE customers SET expires_at = ? WHERE id = ?', [future, custId]);
+    return out;
+  };
+  try {
+    await ctx.pppoe.sync(routerId);
+  } finally {
+    (ctx.routers as any).exec = exec;
+  }
+  const c = ctx.db.get<any>('SELECT status, expires_at FROM customers WHERE id = ?', [custId]);
+  assert.equal(c.status, 'active');
+  assert.equal(c.expires_at, future);
 });
 
 test('PPPoE: perpanjang manual, isolir manual, nonaktif, ubah & hapus', async () => {

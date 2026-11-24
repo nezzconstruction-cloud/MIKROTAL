@@ -384,4 +384,12 @@ export const migrations: { version: number; sql: string }[] = [
       ALTER TABLE hotspot_portals ADD COLUMN prices_sig TEXT;
     `,
   },
+  {
+    version: 9,
+    sql: `
+      -- Batch yang dihapus hanya disembunyikan, supaya penjualan yang sudah terjadi tetap ada di laporan
+      ALTER TABLE voucher_batches ADD COLUMN deleted_at TEXT;
+      ALTER TABLE ppp_voucher_batches ADD COLUMN deleted_at TEXT;
+    `,
+  },
 ];

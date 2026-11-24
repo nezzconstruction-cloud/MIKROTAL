@@ -37,8 +37,10 @@ export async function voucherRoutes(app: FastifyInstance, ctx: AppContext) {
       {
         ...b,
         resellerId,
-        price: own !== undefined ? undefined : b.price,
-        dataLimit: b.dataLimit !== undefined ? parseBytes(b.dataLimit) : undefined,
+        // Reseller memakai harga dan batas dari Profil & Harga apa adanya: tidak bisa memperpanjang voucher murah
+        ...(own !== undefined
+          ? { price: undefined, validity: undefined, timeLimit: undefined, dataLimit: undefined }
+          : { price: b.price, dataLimit: b.dataLimit !== undefined ? parseBytes(b.dataLimit) : undefined }),
       },
       req.user.username,
     );
@@ -95,7 +97,7 @@ export async function voucherRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.get('/api/vouchers/batches', { preHandler: auth('voucher.view') }, async (req) => {
     const q = req.query as Record<string, string>;
-    const where: string[] = [];
+    const where: string[] = ['b.deleted_at IS NULL'];
     const params: any[] = [];
     const own = scope(req);
     if (own !== undefined) {
@@ -124,7 +126,7 @@ export async function voucherRoutes(app: FastifyInstance, ctx: AppContext) {
     const own = scope(req);
     let rows: any[] = [];
     if (q.batchId) {
-      const batch = ctx.db.get<any>('SELECT * FROM voucher_batches WHERE id = ?', [Number(q.batchId)]);
+      const batch = ctx.db.get<any>('SELECT * FROM voucher_batches WHERE id = ? AND deleted_at IS NULL', [Number(q.batchId)]);
       if (!batch || (own !== undefined && batch.reseller_id !== own)) throw new HttpError(404, 'Batch tidak ditemukan');
       const onlyUnused = q.onlyUnused === '1' ? `AND status = 'unused'` : '';
       rows = ctx.db.all(`SELECT * FROM vouchers WHERE batch_id = ? ${onlyUnused} ORDER BY id`, [batch.id]);
