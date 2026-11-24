@@ -1,0 +1,30 @@
+# MIKROTAL Cloud: aplikasi + Caddy (HTTPS otomatis untuk domain utama dan setiap subdomain pelanggan).
+# Panduan lengkap: docs/CLOUD.md
+services:
+  mikrotal:
+    build: ../..
+    image: mikrotal:latest
+    container_name: mikrotal-cloud
+    restart: unless-stopped
+    # network host: aplikasi memakai rute server ke jaringan tunnel VPN (10.200.0.0/16 lewat CHR)
+    network_mode: host
+    env_file: .env
+    environment:
+      MIKROTAL_MODE: cloud
+      NODE_ENV: production
+      HOST: 127.0.0.1
+      PORT: 8080
+      TZ: Asia/Jakarta
+    volumes:
+      - ./data:/app/data
+
+  caddy:
+    image: caddy:2.8.4
+    container_name: mikrotal-caddy
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/data:/data
+      - ./caddy/config:/config

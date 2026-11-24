@@ -53,6 +53,8 @@ npm run build
 npm start
 ```
 
+Di Windows, langkah `npm install`, `npm run build`, dan `npm start` bisa diganti dengan klik dua kali **`mikrotal-start.bat`**. File yang sama dipakai untuk menyalakan MIKROTAL lagi setelah komputer mati. Agar menyala sendiri, klik dua kali `scripts\windows\pasang-autostart.bat`.
+
 Buka `http://localhost:8080` (atau `http://IP-SERVER:8080` dari perangkat lain) dan login dengan `admin` serta password dari `.env` (bawaan `admin123`).
 
 Saat pertama jalan, otomatis dibuat:
@@ -66,9 +68,21 @@ cp .env.example .env        # ganti APP_SECRET dan ADMIN_PASSWORD
 docker compose up -d --build
 ```
 
-Panduan lengkap (update dari versi sebelumnya, cadangan data, menjalankan otomatis saat server menyala, dan masalah yang sering muncul) ada di **[INSTALL.md](INSTALL.md)**.
+Panduan lengkap (update dari versi sebelumnya, cadangan data, menjalankan otomatis saat komputer menyala di Windows/Linux/Docker, dan masalah yang sering muncul) ada di **[INSTALL.md](INSTALL.md)**.
 
 Setelah terpasang, lanjutkan ke [Menghubungkan MikroTik asli](#menghubungkan-mikrotik-asli) dan [Alur PPPoE (RT/RW Net)](#alur-pppoe-rtrw-net).
+
+## MIKROTAL Cloud (layanan berlangganan)
+
+MIKROTAL juga bisa dijalankan sebagai layanan online untuk banyak pelanggan (`MIKROTAL_MODE=cloud`):
+
+- **Pendaftaran mandiri** di domain utama, setiap pelanggan mendapat alamat sendiri (`<alamat>.domain-anda.id`) dengan data, login, dan kunci enkripsi terpisah.
+- **Langganan per jumlah router**: uji coba, masa tenggang, lalu layanan otomatis berhenti bila belum dibayar (data tidak dihapus). Pengingat H-7/H-3/H-1.
+- **Pembayaran transfer manual**: tagihan dengan 3 digit kode unik, pelanggan mengunggah bukti, admin platform mengonfirmasi.
+- **Router tanpa IP publik** terhubung lewat VPN ke MikroTik CHR: WireGuard untuk RouterOS v7, L2TP/IPsec atau SSTP untuk v6. Cukup tempel satu skrip di terminal router; router antar pelanggan terisolasi.
+- **Panel admin platform**: pelanggan, pembayaran, paket, rekening, dan penyiapan CHR otomatis.
+
+Aturan koneksi, aturan langganan, dan cara memasang di server ada di **[docs/CLOUD.md](docs/CLOUD.md)**.
 
 ## Fitur utama
 

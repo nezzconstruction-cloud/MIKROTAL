@@ -9,6 +9,7 @@ import type { PppoeService } from './services/pppoe.js';
 import type { PortalService } from './services/portal.js';
 import type { MikhmonService } from './services/mikhmon.js';
 import type { RouterManager } from './services/routers.js';
+import type { TenantCloud } from './cloud/bridge.js';
 import type { SettingsService } from './services/settings.js';
 import { HttpError, type VoucherService } from './services/vouchers.js';
 
@@ -27,6 +28,8 @@ export interface AppContext {
   alerts: AlertService;
   audit: AuditService;
   backup: BackupService;
+  /** Hanya di mode cloud (MIKROTAL Cloud langganan). */
+  cloud?: TenantCloud;
 }
 
 export interface AuthUser {

@@ -11,6 +11,7 @@ import {
   ChevronDown,
   ChevronRight,
   ClipboardList,
+  CreditCard,
   FileClock,
   LayoutDashboard,
   LogOut,
@@ -31,7 +32,9 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import { get, post } from '../lib/api';
+import { get, post, setSubscriptionInactiveHandler } from '../lib/api';
+import { useCloud } from '../lib/cloud';
+import { formatDate } from '../lib/format';
 import { ROLE_LABEL, useAuth } from '../lib/auth';
 import { useRealtime } from '../lib/realtime';
 import { useRouters } from '../lib/router-context';
@@ -223,6 +226,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     }
   });
 
+  const { data: cloud } = useCloud();
   const groups = useMemo(
     () => NAV.filter((g) => !g.perm || can(g.perm)).map((g) => ({ ...g, items: g.items.filter((i) => !i.perm || can(i.perm)) })),
     [can],
@@ -259,6 +263,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         {TOP_LINKS.filter((l) => !l.perm || can(l.perm)).map((l) => (
           <SideLink key={l.to} {...l} onClick={onNavigate} />
         ))}
+        {cloud && (can('settings.manage') || can('router.manage')) && <SideLink to="/cloud" label="Langganan & VPN" icon={<CreditCard className="size-4" />} onClick={onNavigate} />}
         {groups.length > 0 && <p className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-subtle">MikroTik</p>}
         {groups.map((g) => (
           <div key={g.id}>
@@ -457,6 +462,37 @@ function UserMenu() {
   );
 }
 
+/** MIKROTAL Cloud: pengingat masa langganan di atas setiap halaman. */
+function SubscriptionBanner() {
+  const { data } = useCloud();
+  const location = useLocation();
+  if (!data || location.pathname === '/cloud') return null;
+  const st = data.status;
+  const soon = (st.phase === 'trial' || st.phase === 'active') && st.daysLeft <= 7;
+  if (!soon && st.canUse) return null;
+  const danger = !st.canUse;
+  const text =
+    st.phase === 'grace'
+      ? `Masa langganan habis ${formatDate(st.periodEnd, false)}. Layanan berhenti ${formatDate(st.graceEnd, false)} bila belum dibayar.`
+      : danger
+        ? st.reason
+        : `${st.trial ? 'Masa uji coba' : 'Langganan'} berakhir ${st.daysLeft <= 0 ? 'hari ini' : `${st.daysLeft} hari lagi`} (${formatDate(st.periodEnd, false)}).`;
+  return (
+    <div
+      className={clsx(
+        'no-print mb-4 flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3 text-sm',
+        danger || st.phase === 'grace' ? 'border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300' : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+      )}
+    >
+      <CreditCard className="size-4 shrink-0" />
+      <span className="min-w-0 flex-1">{text}</span>
+      <Link to="/cloud" className="rounded-lg bg-white/60 px-3 py-1 text-xs font-semibold text-slate-900 hover:bg-white dark:bg-white/10 dark:text-white">
+        {st.trial ? 'Pilih paket' : 'Bayar sekarang'}
+      </Link>
+    </div>
+  );
+}
+
 export function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { dark, toggle } = useTheme();
@@ -464,6 +500,15 @@ export function Layout() {
   const { can } = useAuth();
   const location = useLocation();
   useEffect(() => setMobileOpen(false), [location.pathname]);
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  useEffect(() => {
+    setSubscriptionInactiveHandler(() => {
+      void qc.invalidateQueries({ queryKey: ['cloud-subscription'] });
+      navigate('/cloud');
+    });
+    return () => setSubscriptionInactiveHandler(undefined);
+  }, [navigate, qc]);
 
   return (
     <div className="flex h-full">
@@ -499,6 +544,7 @@ export function Layout() {
           <UserMenu />
         </header>
         <main className="min-w-0 flex-1 overflow-x-hidden p-3 sm:p-5 lg:p-6">
+          <SubscriptionBanner />
           <Outlet />
         </main>
       </div>

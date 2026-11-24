@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
@@ -41,7 +42,11 @@ class SimStore {
     readonly identity: string,
     private readonly file?: string,
   ) {
-    this.state = this.load() ?? createInitialState(identity);
+    const fresh = createInitialState(identity);
+    this.state = this.load() ?? fresh;
+    // Menu yang ditambahkan setelah state disimpan
+    for (const [k, v] of Object.entries(fresh.tables)) this.state.tables[k] ??= v;
+    for (const [k, v] of Object.entries(fresh.singletons)) this.state.singletons[k] ??= v;
     if (this.file) {
       this.timer = setInterval(() => this.save(), 5000);
       this.timer.unref();
@@ -137,6 +142,9 @@ function createInitialState(identity: string): SimState {
       { interface: 'wlan1', bridge: 'bridge-hotspot' },
     ]),
     '/interface/vlan': mk([]),
+    '/interface/wireguard': mk([]),
+    '/interface/wireguard/peers': mk([]),
+    '/certificate': mk([]),
     '/ip/address': mk([
       { address: '192.168.1.2/24', network: '192.168.1.0', interface: 'ether1-WAN', dynamic: 'false' },
       { address: '192.168.88.1/24', network: '192.168.88.0', interface: 'ether2-LAN', dynamic: 'false' },
@@ -281,6 +289,8 @@ function createInitialState(identity: string): SimState {
     '/system/ntp/client': { enabled: 'true', servers: 'id.pool.ntp.org', status: 'synchronized' },
     '/ip/cloud': { 'ddns-enabled': 'false', 'public-address': '' },
     '/snmp': { enabled: 'false', contact: '', location: '' },
+    '/interface/l2tp-server/server': { enabled: 'false', 'use-ipsec': 'no', 'ipsec-secret': '', 'default-profile': 'default-encryption', authentication: 'pap,chap,mschap1,mschap2' },
+    '/interface/sstp-server/server': { enabled: 'false', port: '443', certificate: 'none', 'default-profile': 'default', authentication: 'pap,chap,mschap1,mschap2' },
   };
 
   const ifaceRate: SimState['ifaceRate'] = {};
@@ -797,8 +807,17 @@ export class SimulatedRouter extends EventEmitter implements RouterConnection {
         if (base === '/ip/hotspot/user') Object.assign(item, { profile: 'default', server: 'all', uptime: '0s', 'bytes-in': '0', 'bytes-out': '0', 'limit-uptime': '', 'limit-bytes-total': '0' });
         if (base === '/interface/vlan') Object.assign(item, { type: 'vlan', running: 'true', mtu: '1500' });
         if (base === '/ppp/secret') Object.assign(item, { service: 'any', profile: 'default' });
+        if (base === '/interface/wireguard') {
+          // RouterOS membuat pasangan kunci sendiri bila private-key tidak diisi
+          const kp = crypto.generateKeyPairSync('x25519');
+          const b64 = (k: crypto.KeyObject, f: 'd' | 'x') => Buffer.from(String(k.export({ format: 'jwk' })[f]), 'base64url').toString('base64');
+          Object.assign(item, { 'listen-port': '13231', mtu: '1420', running: 'true', 'private-key': b64(kp.privateKey, 'd'), 'public-key': b64(kp.publicKey, 'x') });
+        }
         this.applyParams(item, params);
         rows.push(item);
+        if (base === '/interface/wireguard') {
+          this.table('/interface').push({ '.id': this.newId(), name: item.name, type: 'wg', mtu: '1420', running: 'true', disabled: 'false', comment: item.comment ?? '', 'mac-address': '' });
+        }
         if (base === '/interface/vlan') {
           this.table('/interface').push({ '.id': this.newId(), name: item.name, type: 'vlan', mtu: '1500', running: 'true', disabled: 'false', comment: item.comment ?? '', 'mac-address': macAddr() });
         }

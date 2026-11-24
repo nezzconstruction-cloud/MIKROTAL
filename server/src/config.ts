@@ -45,6 +45,15 @@ export const config = {
   webDist: env.WEB_DIST ? path.resolve(projectRoot, env.WEB_DIST) : undefined,
   logLevel: env.LOG_LEVEL ?? 'info',
   isProduction: env.NODE_ENV === 'production',
+  /** "self" = dipasang sendiri (bawaan); "cloud" = MIKROTAL Cloud berlangganan, banyak pelanggan dalam satu server. */
+  mode: (env.MIKROTAL_MODE === 'cloud' ? 'cloud' : 'self') as 'self' | 'cloud',
+  cloud: {
+    baseDomain: env.CLOUD_BASE_DOMAIN ?? 'localhost',
+    publicScheme: (env.CLOUD_PUBLIC_SCHEME === 'http' ? 'http' : 'https') as 'http' | 'https',
+    publicPort: env.CLOUD_PUBLIC_PORT ? Number(env.CLOUD_PUBLIC_PORT) : undefined,
+    adminUsername: env.PLATFORM_ADMIN_USERNAME ?? 'admin',
+    adminPassword: env.PLATFORM_ADMIN_PASSWORD ?? 'admin123',
+  },
 };
 
 export type AppConfig = typeof config;

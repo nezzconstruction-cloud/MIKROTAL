@@ -5,6 +5,7 @@ import { RESOURCE_RULES, SINGLETON_RULES, sanitizeParams } from '../lib/resource
 import { hasPermission } from '../lib/security.js';
 import { publicRouter, type RouterRecord } from '../services/routers.js';
 import { HttpError } from '../services/vouchers.js';
+import { MAX_SIMULATED_ROUTERS } from '../cloud/bridge.js';
 
 const routerSchema = z.object({
   name: z.string().trim().min(1, 'Nama router wajib diisi').max(64),
@@ -51,6 +52,21 @@ export async function routerRoutes(app: FastifyInstance, ctx: AppContext) {
     if (rule.danger && !hasPermission(req.user.role, 'system.danger')) throw new HttpError(403, 'Menu sensitif, hanya admin');
   };
 
+  /** Mode cloud: batas jumlah router sesuai paket, dan alamat router harus boleh dihubungi. */
+  const cloudCheck = async (b: { host: string; simulate: boolean }, exceptId?: number) => {
+    if (!ctx.cloud) return;
+    const count = (simulate: boolean) =>
+      ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM routers WHERE simulate = ? AND id != ?', [simulate ? 1 : 0, exceptId ?? 0])!.n;
+    if (b.simulate) {
+      if (count(true) >= MAX_SIMULATED_ROUTERS) throw new HttpError(400, `Router simulasi maksimal ${MAX_SIMULATED_ROUTERS}`);
+      return;
+    }
+    const st = ctx.cloud.status();
+    if (count(false) >= st.maxRouters)
+      throw new HttpError(402, `Paket ${st.planName} maksimal ${st.maxRouters} router. Upgrade paket di menu Langganan & VPN untuk menambah router.`);
+    await ctx.cloud.resolveRouterHost(b.host);
+  };
+
   // ---- CRUD router ----
   app.get('/api/routers', { preHandler: auth() }, async (req) => {
     const list = ctx.routers.list();
@@ -70,6 +86,7 @@ export async function routerRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.post('/api/routers/test', { preHandler: auth('router.manage') }, async (req) => {
     const b = routerSchema.extend({ id: z.number().optional() }).parse(req.body);
+    if (ctx.cloud && !b.simulate) await ctx.cloud.resolveRouterHost(b.host);
     let password = b.password ?? '';
     if (!password && b.id) password = ctx.box.decrypt(ctx.routers.get(b.id)?.password_enc ?? '');
     return ctx.routers.test({ host: b.host, port: b.port, username: b.username, password, tls: b.use_tls, simulate: b.simulate, name: b.name });
@@ -77,6 +94,7 @@ export async function routerRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.post('/api/routers', { preHandler: auth('router.manage') }, async (req) => {
     const b = routerSchema.parse(req.body);
+    await cloudCheck(b);
     const { lastId } = ctx.db.run(
       `INSERT INTO routers (name, host, port, username, password_enc, use_tls, simulate, location, wan_interface, hotspot_dns, notes, enabled, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -93,6 +111,9 @@ export async function routerRoutes(app: FastifyInstance, ctx: AppContext) {
     const cur = ctx.routers.require(id);
     const b = routerSchema.partial().parse(req.body);
     const next = { ...cur, ...b } as any;
+    // Mengubah router yang sudah ada tidak dihitung menambah, kecuali router simulasi dijadikan router asli
+    if (ctx.cloud && !!cur.simulate !== !!next.simulate) await cloudCheck({ host: next.host, simulate: !!next.simulate }, id);
+    else if (ctx.cloud && !next.simulate && b.host !== undefined) await ctx.cloud.resolveRouterHost(next.host);
     ctx.db.run(
       `UPDATE routers SET name = ?, host = ?, port = ?, username = ?, use_tls = ?, simulate = ?, location = ?, wan_interface = ?, hotspot_dns = ?, notes = ?, enabled = ? WHERE id = ?`,
       [next.name, next.host, next.port, next.username, !!next.use_tls, !!next.simulate, next.location, next.wan_interface, next.hotspot_dns, next.notes, !!next.enabled, id],

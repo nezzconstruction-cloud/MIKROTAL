@@ -32,16 +32,20 @@ import { syncRoutes } from './routes/sync.js';
 import { businessRoutes } from './routes/business.js';
 import { adminRoutes } from './routes/admin.js';
 import { publicRoutes } from './routes/public.js';
+import { cloudRoutes } from './routes/cloud.js';
+import { allowedWhenInactive, type TenantCloud } from './cloud/bridge.js';
 
 export interface BuildOptions {
   config?: Partial<AppConfig>;
   logger?: boolean;
+  /** Mode cloud: aplikasi ini milik satu pelanggan langganan. */
+  cloud?: TenantCloud;
 }
 
 export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyInstance; ctx: AppContext }> {
   const config: AppConfig = { ...defaultConfig, ...opts.config };
   const app = Fastify({
-    logger: opts.logger === false ? false : { level: config.logLevel },
+    logger: opts.logger === false ? false : { level: config.logLevel, ...(opts.cloud ? { base: { tenant: opts.cloud.slug } } : {}) },
     trustProxy: true,
     bodyLimit: 2 * 1024 * 1024,
   });
@@ -50,7 +54,11 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
   const box = new SecretBox(config.appSecret);
   const hub = new Hub();
   const settings = new SettingsService(db);
-  const routers = new RouterManager(db, box, config.dbFile === ':memory:' ? undefined : config.dataDir);
+  const cloud = opts.cloud;
+  const routers = new RouterManager(db, box, config.dbFile === ':memory:' ? undefined : config.dataDir, {
+    simKeyPrefix: cloud ? `${cloud.slug}:` : undefined,
+    resolveHost: cloud ? (h) => cloud.resolveRouterHost(h) : undefined,
+  });
   const alerts = new AlertService(db, settings, hub, app.log);
   const audit = new AuditService(db);
   const monitor = new MonitorService(db, routers, settings, alerts, hub, app.log);
@@ -59,7 +67,7 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
   const portal = new PortalService(db, routers, settings);
   const mikhmon = new MikhmonService(db, routers, settings, vouchers);
   const backup = new BackupService(db, routers, settings, alerts);
-  const ctx: AppContext = { config, db, box, hub, settings, routers, monitor, vouchers, pppoe, portal, mikhmon, alerts, audit, backup };
+  const ctx: AppContext = { config, db, box, hub, settings, routers, monitor, vouchers, pppoe, portal, mikhmon, alerts, audit, backup, cloud };
 
   seed(ctx);
 
@@ -86,6 +94,15 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
     return reply.status(500).send({ error: 'Terjadi kesalahan pada server' });
   });
 
+  // Mode cloud: langganan habis/dihentikan → hanya login dan halaman Langganan yang bisa dipakai
+  if (cloud) {
+    app.addHook('onRequest', async (req, reply) => {
+      if (allowedWhenInactive(req.url)) return;
+      const st = cloud.status();
+      if (!st.canUse) return reply.status(402).send({ error: st.reason, code: 'SUBSCRIPTION_INACTIVE', phase: st.phase });
+    });
+  }
+
   // Pelanggan terisolir yang dialihkan router (dst-nat port 80) selalu mendarat di halaman isi voucher
   app.addHook('onRequest', async (req, reply) => {
     if (req.method !== 'GET') return;
@@ -110,6 +127,7 @@ export async function buildApp(opts: BuildOptions = {}): Promise<{ app: FastifyI
     await syncRoutes(api, ctx);
     await businessRoutes(api, ctx);
     await adminRoutes(api, ctx);
+    if (cloud) await cloudRoutes(api, ctx);
   });
 
   // Sajikan frontend hasil build (web/dist) bila ada

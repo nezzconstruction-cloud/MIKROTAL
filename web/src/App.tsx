@@ -41,6 +41,7 @@ const Troubleshoot = lazy(() => import('./pages/Troubleshoot'));
 const RouterMenu = lazy(() => import('./pages/RouterMenu'));
 const RouterSync = lazy(() => import('./pages/RouterSync'));
 const Isolir = lazy(() => import('./pages/Isolir'));
+const CloudPage = lazy(() => import('./pages/Cloud'));
 
 function Guard({ perm, children }: { perm?: string; children: ReactNode }) {
   const { can } = useAuth();
@@ -127,6 +128,7 @@ export function App() {
           <Route path="audit" element={<Guard perm="audit.view"><Audit /></Guard>} />
           <Route path="settings" element={<Guard perm="settings.manage"><SettingsPage /></Guard>} />
           <Route path="account" element={<Account />} />
+          <Route path="cloud" element={<CloudPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
