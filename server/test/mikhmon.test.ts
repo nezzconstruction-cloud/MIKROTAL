@@ -118,6 +118,8 @@ test('Mikhmon: deteksi, ambil alih dengan tanggal habis asli, lalu kembalikan sc
   assert.equal((await ex('/ip/hotspot/user/print')).find((u) => u.name === 'mk-baru')!['mac-address'], 'AA:BB:CC:00:11:22');
   assert.equal(row('mk-baru').status, 'active');
   // menyimpan profil dari form lama (tanpa lock_mac) tidak mematikan kunci; dari form baru bisa diubah
+  const pricey = await api('PUT', `/api/routers/${routerId}/hotspot/profiles/MK1HARI`, { name: 'MK1HARI', rate_limit: '9M/9M', price: 5000, reseller_price: 6000 });
+  assert.equal(pricey.status, 400, 'harga reseller di atas harga pelanggan ditolak');
   assert.equal((await api('PUT', `/api/routers/${routerId}/hotspot/profiles/MK1HARI`, { name: 'MK1HARI', rate_limit: '2M/2M', price: 5000 })).status, 200);
   const meta = async () => (await api('GET', `/api/routers/${routerId}/hotspot/profiles`)).body.find((p: any) => p.name === 'MK1HARI').meta.lock_mac;
   assert.equal(await meta(), true);
@@ -145,6 +147,9 @@ test('migrasi 8: harga Mikhmon yang tertukar (harga reseller > harga pelanggan) 
   old.run("INSERT INTO routers (id, name, host, username, password_enc, created_at) VALUES (1, 'r', 'h', 'u', 'x', ?)", [now]);
   old.run("INSERT INTO profile_meta (router_id, profile, price, reseller_price, validity) VALUES (1, 'TUKAR', 4000, 5000, '1d'), (1, 'BENAR', 5000, 4000, '1d')");
   old.run("INSERT INTO vouchers (router_id, code, password, profile, price, created_at) VALUES (1, 'a1', 'a1', 'TUKAR', 4000, ?), (1, 'b1', 'b1', 'BENAR', 5000, ?)", [now, now]);
+  // voucher buatan MIKROTAL dari profil yang tertukar: yang belum terpakai ikut dibetulkan, yang sudah terjual tidak
+  old.run("INSERT INTO voucher_batches (id, code, router_id, profile, qty, price, created_by, created_at) VALUES (1, 'B1', 1, 'TUKAR', 2, 4000, 'admin', ?), (2, 'B2', 1, 'TUKAR', 1, 4000, 'admin', ?)", [now, now]);
+  old.run("INSERT INTO vouchers (batch_id, router_id, code, password, profile, price, status, created_at) VALUES (1, 1, 'c1', 'c1', 'TUKAR', 4000, 'unused', ?), (1, 1, 'c2', 'c2', 'TUKAR', 4000, 'used', ?), (2, 1, 'd1', 'd1', 'TUKAR', 4000, 'unused', ?)", [now, now, now]);
   old.close();
   const db = new DB(file, migrations);
   const meta = (p: string) => db.get<any>('SELECT price, reseller_price FROM profile_meta WHERE profile = ?', [p]);
@@ -152,5 +157,9 @@ test('migrasi 8: harga Mikhmon yang tertukar (harga reseller > harga pelanggan) 
   assert.deepEqual({ ...meta('BENAR') }, { price: 5000, reseller_price: 4000 });
   assert.equal(db.get<any>("SELECT price FROM vouchers WHERE code = 'a1'").price, 5000);
   assert.equal(db.get<any>("SELECT price FROM vouchers WHERE code = 'b1'").price, 5000);
+  const vp = (c: string) => db.get<any>('SELECT price FROM vouchers WHERE code = ?', [c]).price;
+  assert.deepEqual([vp('c1'), vp('c2'), vp('d1')], [5000, 4000, 5000]);
+  const bp = (id: number) => db.get<any>('SELECT price FROM voucher_batches WHERE id = ?', [id]).price;
+  assert.deepEqual([bp(1), bp(2)], [4000, 5000], 'harga batch hanya diubah bila semua vouchernya ikut berubah');
   db.close();
 });

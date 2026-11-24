@@ -363,14 +363,22 @@ export const migrations: { version: number; sql: string }[] = [
     version: 8,
     sql: `
       -- Perbaikan impor Mikhmon lama yang menukar harga jual dengan harga modal: harga reseller tidak mungkin
-      -- lebih mahal dari harga pelanggan. Voucher hasil impor (tanpa batch) yang ikut harga lama disesuaikan.
+      -- lebih mahal dari harga pelanggan. Ikut disesuaikan: voucher hasil impor (tanpa batch) dan voucher buatan
+      -- MIKROTAL yang belum terpakai, bila harganya sama dengan harga lama. Voucher yang sudah terjual tidak diubah.
       UPDATE vouchers SET price = (
         SELECT m.reseller_price FROM profile_meta m WHERE m.router_id = vouchers.router_id AND m.profile = vouchers.profile
       )
-      WHERE batch_id IS NULL AND EXISTS (
+      WHERE (batch_id IS NULL OR status = 'unused') AND EXISTS (
         SELECT 1 FROM profile_meta m
         WHERE m.router_id = vouchers.router_id AND m.profile = vouchers.profile AND m.reseller_price > m.price AND vouchers.price = m.price
       );
+      UPDATE voucher_batches SET price = (
+        SELECT m.reseller_price FROM profile_meta m WHERE m.router_id = voucher_batches.router_id AND m.profile = voucher_batches.profile
+      )
+      WHERE EXISTS (
+        SELECT 1 FROM profile_meta m
+        WHERE m.router_id = voucher_batches.router_id AND m.profile = voucher_batches.profile AND m.reseller_price > m.price AND voucher_batches.price = m.price
+      ) AND NOT EXISTS (SELECT 1 FROM vouchers v WHERE v.batch_id = voucher_batches.id AND v.price = voucher_batches.price);
       UPDATE profile_meta SET price = reseller_price, reseller_price = price WHERE reseller_price > price;
       -- Sidik harga yang tertanam di portal login saat dipasang, untuk mendeteksi harga yang sudah berubah
       ALTER TABLE hotspot_portals ADD COLUMN prices_sig TEXT;
